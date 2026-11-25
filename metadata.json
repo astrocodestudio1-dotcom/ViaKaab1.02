@@ -1,0 +1,8 @@
+{
+  "name": "ViaKaab",
+  "description": "Plataforma local de movilidad, viajes y entregas en Felipe Carrillo Puerto, Quintana Roo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
