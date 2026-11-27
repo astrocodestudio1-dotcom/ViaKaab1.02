@@ -3,15 +3,19 @@ package com.example.viakaab.ui.screens
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.os.Looper
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,14 +27,26 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Emergency
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.GpsFixed
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.filled.ShareLocation
+import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -40,9 +56,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +71,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -61,8 +80,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.viakaab.model.LiveTripPhase
 import com.example.viakaab.model.ServiceMode
+import com.example.viakaab.ui.components.LiveTripTrackingCard
+import com.example.viakaab.ui.components.SafetyAndSosDialog
 import com.example.viakaab.ui.components.ViaKaabInteractiveMap
+import com.example.viakaab.ui.components.shareRouteViaWhatsApp
 import com.example.viakaab.ui.theme.BrandBlue
 import com.example.viakaab.ui.theme.BrandEmerald
 import com.example.viakaab.ui.theme.BrandRed
@@ -70,11 +93,19 @@ import com.example.viakaab.ui.theme.BrandSkyTint
 import com.example.viakaab.ui.theme.PureWhite
 import com.example.viakaab.ui.theme.Slate300
 import com.example.viakaab.ui.theme.Slate400
+import com.example.viakaab.ui.theme.Slate700
 import com.example.viakaab.ui.theme.Slate800
 import com.example.viakaab.ui.theme.Slate900
+import com.example.viakaab.ui.theme.Slate950
 import com.example.viakaab.viewmodel.MapViewModel
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
+import com.google.android.gms.maps.model.LatLng
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -82,11 +113,15 @@ fun PassengerMapScreen(
     mapViewModel: MapViewModel,
     initialMode: ServiceMode = ServiceMode.STANDARD,
     initialAssistanceNote: String = "",
+    initialDestinationQuery: String = "",
     onBack: () -> Unit,
     onOpenProfileMenu: () -> Unit
 ) {
     val context = LocalContext.current
     val uiState by mapViewModel.passengerState.collectAsStateWithLifecycle()
+    val onlineUnits by mapViewModel.onlineUnits.collectAsStateWithLifecycle()
+    val supportPhone by mapViewModel.supportPhone.collectAsStateWithLifecycle()
+    val trustedContactPhone by mapViewModel.trustedContactPhone.collectAsStateWithLifecycle()
     var googleMapRef by remember { mutableStateOf<GoogleMap?>(null) }
     var hasLocationPermission by remember {
         mutableStateOf(
@@ -97,13 +132,14 @@ fun PassengerMapScreen(
         )
     }
     var showConfirmDialog by rememberSaveable { mutableStateOf(false) }
+    var showSosDialog by rememberSaveable { mutableStateOf(false) }
 
     val fusedLocationClient = remember {
         LocationServices.getFusedLocationProviderClient(context)
     }
 
-    LaunchedEffect(initialMode, initialAssistanceNote) {
-        mapViewModel.applyEntryContext(initialMode, initialAssistanceNote)
+    LaunchedEffect(initialMode, initialAssistanceNote, initialDestinationQuery) {
+        mapViewModel.applyEntryContext(initialMode, initialAssistanceNote, initialDestinationQuery)
     }
 
     fun fetchLocation() {
@@ -111,8 +147,41 @@ fun PassengerMapScreen(
         fusedLocationClient.lastLocation.addOnSuccessListener { location ->
             if (location != null) {
                 mapViewModel.onUserLocationResolved(location.latitude, location.longitude)
+                googleMapRef?.animateCamera(
+                    CameraUpdateFactory.newLatLngZoom(
+                        LatLng(location.latitude, location.longitude),
+                        16f
+                    )
+                )
             } else {
                 mapViewModel.onUserLocationResolved(19.5775, -88.0453)
+            }
+        }
+    }
+
+    // Stream real-time GPS updates while PassengerMapScreen is active and permitted
+    DisposableEffect(hasLocationPermission) {
+        if (!hasLocationPermission) {
+            onDispose { }
+        } else {
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
+                .setMinUpdateIntervalMillis(3000L)
+                .build()
+            val callback = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    val loc = result.lastLocation ?: return
+                    mapViewModel.onUserLocationResolved(loc.latitude, loc.longitude)
+                }
+            }
+            runCatching {
+                fusedLocationClient.requestLocationUpdates(
+                    request,
+                    callback,
+                    Looper.getMainLooper()
+                )
+            }
+            onDispose {
+                runCatching { fusedLocationClient.removeLocationUpdates(callback) }
             }
         }
     }
@@ -142,54 +211,120 @@ fun PassengerMapScreen(
         }
     }
 
+    if (showSosDialog) {
+        SafetyAndSosDialog(
+            supportPhone = supportPhone,
+            trustedContactPhone = trustedContactPhone,
+            shareMessage = mapViewModel.buildWhatsAppShareMessage(),
+            onSaveSupportPhone = mapViewModel::saveSupportPhone,
+            onSaveTrustedContactPhone = mapViewModel::saveTrustedContactPhone,
+            onDismiss = { showSosDialog = false }
+        )
+    }
+
     if (showConfirmDialog) {
         val title = when (uiState.selectedMode) {
-            ServiceMode.DELIVERY -> "Solicitud de Envío de Paquete"
-            ServiceMode.INTERCITY -> "Solicitud de Viaje Interurbano"
-            ServiceMode.STANDARD -> "Solicitud de Viaje Local"
-        }
-        val details = buildString {
-            append("🟢 Origen / Recogida:\n${uiState.pickupText}\n\n")
-            append("🔴 Destino / Entrega:\n${uiState.destinationText}\n\n")
-            uiState.estimatedDistanceKm?.let { dist ->
-                append("📏 Distancia estimada: ${"%.1f".format(dist)} km\n\n")
-            }
-            if (uiState.assistanceNote.isNotBlank()) {
-                append("ℹ️ Nota: ${uiState.assistanceNote}\n\n")
-            }
-            if (uiState.selectedMode == ServiceMode.INTERCITY) {
-                val seats = uiState.seatsText.ifBlank { "1" }
-                append("👥 Pasajeros/Asientos: $seats\n\n")
-            } else if (uiState.selectedMode == ServiceMode.DELIVERY) {
-                if (uiState.packageDetailsText.isNotBlank()) {
-                    append("📦 Paquete: ${uiState.packageDetailsText}\n")
-                }
-                if (uiState.recipientText.isNotBlank()) {
-                    append("📞 Recibe: ${uiState.recipientText}\n\n")
-                }
-            }
-            append("💵 Tu oferta de tarifa:\n$${uiState.fareOfferText} MXN\n\n")
-            append("¿Deseas enviar esta oferta a los conductores y repartidores?")
+            ServiceMode.DELIVERY -> "Confirmar Envío de Paquete"
+            ServiceMode.INTERCITY -> "Confirmar Viaje Interurbano"
+            ServiceMode.STANDARD -> "Confirmar Viaje Local"
         }
 
         AlertDialog(
             onDismissRequest = { showConfirmDialog = false },
-            title = { Text(title) },
-            text = { Text(details) },
+            containerColor = Slate900,
+            titleContentColor = PureWhite,
+            textContentColor = Slate300,
+            title = { Text(title, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Slate800,
+                        border = BorderStroke(1.dp, Slate700),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.MyLocation, contentDescription = null, tint = BrandEmerald, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(uiState.pickupText, color = Slate300, fontSize = 12.sp)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Flag, contentDescription = null, tint = BrandRed, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(uiState.destinationText, color = PureWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            }
+                        }
+                    }
+
+                    uiState.estimatedDistanceKm?.let { dist ->
+                        Text(
+                            text = "Distancia estimada: ${"%.1f".format(dist)} km",
+                            color = BrandSkyTint,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    if (uiState.assistanceNote.isNotBlank()) {
+                        Text("Nota: ${uiState.assistanceNote}", color = Slate300, fontSize = 12.sp)
+                    }
+                    if (uiState.selectedMode == ServiceMode.INTERCITY) {
+                        val seats = uiState.seatsText.ifBlank { "1" }
+                        Text("Pasajeros/Asientos: $seats", color = Slate300, fontSize = 12.sp)
+                    } else if (uiState.selectedMode == ServiceMode.DELIVERY) {
+                        if (uiState.packageDetailsText.isNotBlank()) {
+                            Text("Paquete: ${uiState.packageDetailsText}", color = Slate300, fontSize = 12.sp)
+                        }
+                        if (uiState.recipientText.isNotBlank()) {
+                            Text("Recibe: ${uiState.recipientText}", color = Slate300, fontSize = 12.sp)
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = BrandEmerald.copy(alpha = 0.16f),
+                        border = BorderStroke(1.dp, BrandEmerald.copy(alpha = 0.45f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Tu oferta de tarifa", color = Slate300, fontSize = 13.sp)
+                            Text("$${uiState.fareOfferText} MXN", color = BrandEmerald, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                        }
+                    }
+                    Text(
+                        text = "¿Deseas publicar esta oferta y seguir el viaje en tiempo real?",
+                        color = Slate400,
+                        fontSize = 12.sp
+                    )
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     showConfirmDialog = false
                     mapViewModel.publishTripOffer()
                 }) {
-                    Text("Publicar Oferta")
+                    Text("Publicar Oferta", color = BrandEmerald, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showConfirmDialog = false }) {
-                    Text("Cancelar")
+                    Text("Cancelar", color = Slate400)
                 }
             }
         )
+    }
+
+    val liveTrip = uiState.activeLiveTrip
+    val activeDriverLatLng = liveTrip?.let {
+        if (it.phase == LiveTripPhase.DRIVER_ARRIVING || it.phase == LiveTripPhase.IN_PROGRESS) {
+            LatLng(it.driverLat, it.driverLng)
+        } else {
+            null
+        }
     }
 
     Box(
@@ -198,82 +333,161 @@ fun PassengerMapScreen(
             .imePadding()
     ) {
         ViaKaabInteractiveMap(
-            pickupLatLng = uiState.userLatLng,
-            pickupTitle = "Tu ubicación",
-            pickupSnippet = "Punto de recogida GPS",
-            destinationLatLng = uiState.destinationLatLng,
-            destinationTitle = uiState.destinationMarkerTitle.ifBlank { uiState.destinationText },
+            pickupLatLng = liveTrip?.let { LatLng(it.pickupLat, it.pickupLng) } ?: uiState.userLatLng,
+            pickupTitle = if (liveTrip != null) {
+                liveTrip.origin.take(26)
+            } else if (uiState.isUsingRealTimeLocation) {
+                "Recogida · En vivo"
+            } else {
+                "Origen"
+            },
+            pickupSnippet = uiState.lastGpsUpdatedLabel,
+            destinationLatLng = liveTrip?.let { LatLng(it.destLat, it.destLng) } ?: uiState.destinationLatLng,
+            destinationTitle = liveTrip?.destination
+                ?: uiState.destinationMarkerTitle.ifBlank { uiState.destinationText },
             destinationSnippet = "Punto de llegada de viaje / entrega",
             routeColor = BrandBlue,
             hasLocationPermission = hasLocationPermission,
             landmarks = mapViewModel.quickLandmarks,
-            bottomOverlayReserveDp = 360.dp,
-            badgeTopPaddingDp = 18.dp,
+            onlineUnits = onlineUnits,
+            driverLatLng = activeDriverLatLng,
+            driverLabel = liveTrip?.driverName ?: "Unidad ViaKaab",
+            isSearchingDrivers = liveTrip?.phase == LiveTripPhase.SEARCHING,
+            etaMinutes = liveTrip?.etaMinutes,
+            bottomOverlayReserveDp = if (liveTrip != null && uiState.isLiveTripPanelExpanded) 310.dp else 360.dp,
+            badgeTopPaddingDp = 78.dp,
             onMapTap = mapViewModel::onMapTapped,
             onGoogleMapReady = { googleMapRef = it },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Top Bar: Back + Menu
+        // Top Bar: Back + Menu on left, WhatsApp + SOS on right
         Row(
             modifier = Modifier
-                .align(Alignment.TopStart)
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(start = 16.dp, top = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Slate900.copy(alpha = 0.85f))
-                    .testTag("passenger_map_back_button")
-            ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Regresar", tint = PureWhite)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Slate900.copy(alpha = 0.90f))
+                        .border(1.dp, Slate700, RoundedCornerShape(14.dp))
+                        .testTag("passenger_map_back_button")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Regresar", tint = PureWhite)
+                }
+                IconButton(
+                    onClick = onOpenProfileMenu,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Slate900.copy(alpha = 0.90f))
+                        .border(1.dp, Slate700, RoundedCornerShape(14.dp))
+                        .testTag("passenger_map_menu_button")
+                ) {
+                    Icon(Icons.Default.Menu, contentDescription = "Menú", tint = PureWhite)
+                }
             }
-            IconButton(
-                onClick = onOpenProfileMenu,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Slate900.copy(alpha = 0.85f))
-                    .testTag("passenger_map_menu_button")
-            ) {
-                Icon(Icons.Default.Menu, contentDescription = "Menú", tint = PureWhite)
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconButton(
+                    onClick = {
+                        shareRouteViaWhatsApp(
+                            context = context,
+                            trustedPhone = trustedContactPhone,
+                            message = mapViewModel.buildWhatsAppShareMessage()
+                        )
+                    },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(BrandEmerald.copy(alpha = 0.92f))
+                        .testTag("passenger_whatsapp_share_button")
+                ) {
+                    Icon(
+                        Icons.Default.ShareLocation,
+                        contentDescription = "Compartir ubicación por WhatsApp",
+                        tint = PureWhite
+                    )
+                }
+
+                Button(
+                    onClick = { showSosDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BrandRed,
+                        contentColor = PureWhite
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("passenger_sos_button")
+                ) {
+                    Icon(Icons.Default.Emergency, contentDescription = "SOS Policía", modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("SOS", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
             }
         }
 
-        // Bottom Sheet + My Location FAB
+        // Bottom Sheet + Floating Controls
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
         ) {
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(end = 20.dp, bottom = 12.dp),
-                contentAlignment = Alignment.CenterEnd
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                if (liveTrip != null && !uiState.isLiveTripPanelExpanded) {
+                    Button(
+                        onClick = { mapViewModel.setLiveTripPanelExpanded(true) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BrandBlue,
+                            contentColor = PureWhite
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("reopen_live_trip_button")
+                    ) {
+                        Icon(Icons.Default.DirectionsCar, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Ver viaje en tiempo real", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Spacer(modifier = Modifier.width(1.dp))
+                }
+
                 IconButton(
                     onClick = {
                         if (hasLocationPermission) {
+                            mapViewModel.resetPickupToRealTimeGps()
                             fetchLocation()
                         } else {
                             permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
                         }
                     },
                     modifier = Modifier
-                        .size(52.dp)
+                        .size(50.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .background(Slate900.copy(alpha = 0.88f))
+                        .background(Slate900.copy(alpha = 0.90f))
                         .testTag("passenger_my_location_fab")
                 ) {
                     Icon(
                         Icons.Default.MyLocation,
-                        contentDescription = "Mi ubicación",
-                        tint = PureWhite
+                        contentDescription = "Usar mi ubicación en tiempo real",
+                        tint = BrandEmerald
                     )
                 }
             }
@@ -281,152 +495,94 @@ fun PassengerMapScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 460.dp)
-                    .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                    .heightIn(max = 470.dp)
+                    .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
                     .background(Slate900)
+                    .border(1.dp, Slate700.copy(alpha = 0.7f), RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
                     .navigationBarsPadding()
                     .verticalScroll(rememberScrollState())
-                    .padding(20.dp)
+                    .padding(horizontal = 20.dp, vertical = 14.dp)
             ) {
-                Row(
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(bottom = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ServiceModeChip(
-                        label = "🚗 Estándar",
-                        selected = uiState.selectedMode == ServiceMode.STANDARD,
-                        testTag = "mode_standard_chip",
-                        onClick = { mapViewModel.setServiceMode(ServiceMode.STANDARD) }
-                    )
-                    ServiceModeChip(
-                        label = "🚕 Ciudad a Ciudad",
-                        selected = uiState.selectedMode == ServiceMode.INTERCITY,
-                        testTag = "mode_intercity_chip",
-                        onClick = { mapViewModel.setServiceMode(ServiceMode.INTERCITY) }
-                    )
-                    ServiceModeChip(
-                        label = "🛵 Entregas / Envíos",
-                        selected = uiState.selectedMode == ServiceMode.DELIVERY,
-                        testTag = "mode_delivery_chip",
-                        onClick = { mapViewModel.setServiceMode(ServiceMode.DELIVERY) }
-                    )
-                }
+                        .align(Alignment.CenterHorizontally)
+                        .padding(bottom = 12.dp)
+                        .width(40.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(Slate700)
+                )
 
-                // Quick Felipe Carrillo Puerto landmark chips
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(bottom = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    mapViewModel.quickLandmarks.forEach { landmark ->
-                        FilterChip(
-                            selected = uiState.destinationText == landmark.query,
-                            onClick = { mapViewModel.selectQuickLandmark(landmark) },
-                            label = { Text(landmark.label, fontSize = 12.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                containerColor = Slate800,
-                                labelColor = Slate300,
-                                selectedContainerColor = BrandBlue,
-                                selectedLabelColor = PureWhite
+                if (liveTrip != null && uiState.isLiveTripPanelExpanded) {
+                    LiveTripTrackingCard(
+                        liveTrip = liveTrip,
+                        gpsStatusLabel = uiState.lastGpsUpdatedLabel,
+                        currentLat = uiState.userLatLng.latitude,
+                        currentLng = uiState.userLatLng.longitude,
+                        onShareWhatsApp = {
+                            shareRouteViaWhatsApp(
+                                context = context,
+                                trustedPhone = trustedContactPhone,
+                                message = mapViewModel.buildWhatsAppShareMessage()
                             )
+                        },
+                        onOpenSos = { showSosDialog = true },
+                        onMinimize = { mapViewModel.setLiveTripPanelExpanded(false) },
+                        onCloseTrip = mapViewModel::closeLiveTrip
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(bottom = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ServiceModeChip(
+                            icon = Icons.Default.DirectionsCar,
+                            label = "Estándar",
+                            selected = uiState.selectedMode == ServiceMode.STANDARD,
+                            testTag = "mode_standard_chip",
+                            onClick = { mapViewModel.setServiceMode(ServiceMode.STANDARD) }
+                        )
+                        ServiceModeChip(
+                            icon = Icons.Default.Route,
+                            label = "Ciudad a Ciudad",
+                            selected = uiState.selectedMode == ServiceMode.INTERCITY,
+                            testTag = "mode_intercity_chip",
+                            onClick = { mapViewModel.setServiceMode(ServiceMode.INTERCITY) }
+                        )
+                        ServiceModeChip(
+                            icon = Icons.Default.TwoWheeler,
+                            label = "Entregas / Envíos",
+                            selected = uiState.selectedMode == ServiceMode.DELIVERY,
+                            testTag = "mode_delivery_chip",
+                            onClick = { mapViewModel.setServiceMode(ServiceMode.DELIVERY) }
                         )
                     }
-                }
 
-                if (uiState.assistanceNote.isNotBlank()) {
-                    Text(
-                        text = "ℹ️ ${uiState.assistanceNote}",
-                        color = BrandSkyTint,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                }
-
-                val pickupHint = when (uiState.selectedMode) {
-                    ServiceMode.DELIVERY -> "🟢 Recolección de Paquete (¿Dónde lo recogen?)"
-                    ServiceMode.INTERCITY -> "🟢 Ciudad de Origen (ej. Felipe Carrillo Puerto)"
-                    ServiceMode.STANDARD -> "🟢 Punto de Recogida (¿Dónde te recogemos?)"
-                }
-                val destHint = when (uiState.selectedMode) {
-                    ServiceMode.DELIVERY -> "🔴 Entrega de Paquete (¿A dónde lo llevan?)"
-                    ServiceMode.INTERCITY -> "🔴 Ciudad de Destino (ej. Tulum, Chetumal)"
-                    ServiceMode.STANDARD -> "🔴 Destino (o toca en el mapa)"
-                }
-
-                OutlinedTextField(
-                    value = uiState.pickupText,
-                    onValueChange = mapViewModel::updatePickup,
-                    label = { Text(pickupHint, fontSize = 12.sp) },
-                    singleLine = true,
-                    colors = darkMapFieldColors(BrandEmerald),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp)
-                        .testTag("pickup_location_input")
-                )
-
-                OutlinedTextField(
-                    value = uiState.destinationText,
-                    onValueChange = mapViewModel::updateDestination,
-                    label = { Text(destHint, fontSize = 12.sp) },
-                    singleLine = true,
-                    colors = darkMapFieldColors(BrandRed),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp)
-                        .testTag("destination_location_input")
-                )
-
-                if (uiState.selectedMode == ServiceMode.INTERCITY) {
-                    OutlinedTextField(
-                        value = uiState.seatsText,
-                        onValueChange = mapViewModel::updateSeats,
-                        label = { Text("👥 Número de pasajeros / asientos (ej. 2)", fontSize = 12.sp) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        colors = darkMapFieldColors(BrandBlue),
-                        shape = RoundedCornerShape(16.dp),
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 8.dp)
-                    )
-                }
+                            .horizontalScroll(rememberScrollState())
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        mapViewModel.quickLandmarks.forEach { landmark ->
+                            FilterChip(
+                                selected = uiState.destinationText == landmark.query,
+                                onClick = { mapViewModel.selectQuickLandmark(landmark) },
+                                label = { Text(landmark.label, fontSize = 12.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = Slate800,
+                                    labelColor = Slate300,
+                                    selectedContainerColor = BrandBlue,
+                                    selectedLabelColor = PureWhite
+                                )
+                            )
+                        }
+                    }
 
-                if (uiState.selectedMode == ServiceMode.DELIVERY) {
-                    OutlinedTextField(
-                        value = uiState.packageDetailsText,
-                        onValueChange = mapViewModel::updatePackageDetails,
-                        label = { Text("📦 ¿Qué envías? (ej. Documentos, Comida)", fontSize = 12.sp) },
-                        singleLine = true,
-                        colors = darkMapFieldColors(BrandBlue),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp)
-                    )
-                    OutlinedTextField(
-                        value = uiState.recipientText,
-                        onValueChange = mapViewModel::updateRecipient,
-                        label = { Text("📞 Nombre y teléfono de quien recibe", fontSize = 12.sp) },
-                        singleLine = true,
-                        colors = darkMapFieldColors(BrandBlue),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp)
-                    )
-                }
-
-                uiState.suggestedFareMxn?.let { suggested ->
-                    val dist = uiState.estimatedDistanceKm ?: 0.0
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -434,77 +590,257 @@ fun PassengerMapScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "📏 ${"%.1f".format(dist)} km · Sugerido: $$suggested MXN",
-                            color = BrandSkyTint,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Usar $$suggested",
-                            color = BrandEmerald,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Sensors,
+                                contentDescription = null,
+                                tint = if (uiState.hasGpsFix) BrandEmerald else Slate400,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = uiState.lastGpsUpdatedLabel,
+                                color = if (uiState.hasGpsFix) BrandEmerald else Slate400,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        if (!uiState.isUsingRealTimeLocation) {
+                            Text(
+                                text = "Usar ubicación en vivo",
+                                color = BrandBlue,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clickable {
+                                        mapViewModel.resetPickupToRealTimeGps()
+                                        fetchLocation()
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    if (uiState.assistanceNote.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = BrandBlue.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, BrandBlue.copy(alpha = 0.35f)),
                             modifier = Modifier
-                                .clickable { mapViewModel.updateFareOffer(suggested.toString()) }
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = BrandSkyTint,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = uiState.assistanceNote,
+                                    color = BrandSkyTint,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+
+                    val pickupHint = when (uiState.selectedMode) {
+                        ServiceMode.DELIVERY -> "Recolección (Ubicación actual en tiempo real)"
+                        ServiceMode.INTERCITY -> "Origen (Ubicación actual en tiempo real)"
+                        ServiceMode.STANDARD -> "Recogida (Ubicación actual en tiempo real)"
+                    }
+                    val destHint = when (uiState.selectedMode) {
+                        ServiceMode.DELIVERY -> "Entrega de Paquete (¿A dónde lo llevan?)"
+                        ServiceMode.INTERCITY -> "Ciudad de Destino (ej. Tulum, Chetumal)"
+                        ServiceMode.STANDARD -> "Destino (o toca en el mapa)"
+                    }
+
+                    OutlinedTextField(
+                        value = uiState.pickupText,
+                        onValueChange = mapViewModel::updatePickup,
+                        label = { Text(pickupHint, fontSize = 12.sp) },
+                        trailingIcon = {
+                            IconButton(
+                                onClick = {
+                                    if (hasLocationPermission) {
+                                        mapViewModel.resetPickupToRealTimeGps()
+                                        fetchLocation()
+                                    } else {
+                                        permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.GpsFixed,
+                                    contentDescription = "Ubicación actual en tiempo real",
+                                    tint = if (uiState.isUsingRealTimeLocation) BrandEmerald else Slate400
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        colors = darkMapFieldColors(BrandEmerald),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .testTag("pickup_location_input")
+                    )
+
+                    OutlinedTextField(
+                        value = uiState.destinationText,
+                        onValueChange = mapViewModel::updateDestination,
+                        label = { Text(destHint, fontSize = 12.sp) },
+                        singleLine = true,
+                        colors = darkMapFieldColors(BrandRed),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .testTag("destination_location_input")
+                    )
+
+                    if (uiState.selectedMode == ServiceMode.INTERCITY) {
+                        OutlinedTextField(
+                            value = uiState.seatsText,
+                            onValueChange = mapViewModel::updateSeats,
+                            label = { Text("👥 Número de pasajeros / asientos (ej. 2)", fontSize = 12.sp) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = darkMapFieldColors(BrandBlue),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
                         )
                     }
-                }
 
-                OutlinedTextField(
-                    value = uiState.fareOfferText,
-                    onValueChange = mapViewModel::updateFareOffer,
-                    label = { Text("💵 Tu oferta de tarifa en $ MXN (ej. 40)", fontSize = 12.sp) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    colors = darkMapFieldColors(BrandBlue),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 14.dp)
-                        .testTag("fare_offer_input")
-                )
+                    if (uiState.selectedMode == ServiceMode.DELIVERY) {
+                        OutlinedTextField(
+                            value = uiState.packageDetailsText,
+                            onValueChange = mapViewModel::updatePackageDetails,
+                            label = { Text("📦 ¿Qué envías? (ej. Documentos, Comida)", fontSize = 12.sp) },
+                            singleLine = true,
+                            colors = darkMapFieldColors(BrandBlue),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        )
+                        OutlinedTextField(
+                            value = uiState.recipientText,
+                            onValueChange = mapViewModel::updateRecipient,
+                            label = { Text("📞 Nombre y teléfono de quien recibe", fontSize = 12.sp) },
+                            singleLine = true,
+                            colors = darkMapFieldColors(BrandBlue),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        )
+                    }
 
-                val buttonLabel = when (uiState.selectedMode) {
-                    ServiceMode.DELIVERY -> "Solicitar Envío de Paquete"
-                    ServiceMode.INTERCITY -> "Solicitar Viaje Interurbano"
-                    ServiceMode.STANDARD -> "Solicitar Viaje (Felipe Carrillo Puerto)"
-                }
-
-                Button(
-                    onClick = {
-                        val fareNum = uiState.fareOfferText.trim().toIntOrNull()
-                        when {
-                            uiState.pickupText.isBlank() -> Toast.makeText(
-                                context,
-                                "Indica el punto de origen o recolección",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            uiState.destinationText.isBlank() -> Toast.makeText(
-                                context,
-                                "Indica el destino o punto de entrega",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            fareNum == null || fareNum < 20 -> Toast.makeText(
-                                context,
-                                "Ingresa una oferta válida (mínimo $20 MXN)",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            else -> showConfirmDialog = true
+                    uiState.suggestedFareMxn?.let { suggested ->
+                        val dist = uiState.estimatedDistanceKm ?: 0.0
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${"%.1f".format(dist)} km · Tarifa sugerida: $$suggested MXN",
+                                color = BrandSkyTint,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Usar $$suggested",
+                                color = BrandEmerald,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clickable { mapViewModel.updateFareOffer(suggested.toString()) }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BrandEmerald,
-                        contentColor = PureWhite
-                    ),
-                    shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
-                        .testTag("request_trip_button")
-                ) {
-                    Text(buttonLabel, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    val fareLabel = when (uiState.selectedMode) {
+                        ServiceMode.STANDARD -> "Tu oferta de tarifa en $ MXN (ej. $25)"
+                        ServiceMode.DELIVERY -> "Tu oferta de tarifa en $ MXN (ej. $30)"
+                        ServiceMode.INTERCITY -> "Tu oferta de tarifa en $ MXN (ej. $120)"
+                    }
+
+                    OutlinedTextField(
+                        value = uiState.fareOfferText,
+                        onValueChange = mapViewModel::updateFareOffer,
+                        label = { Text(fareLabel, fontSize = 12.sp) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Payments,
+                                contentDescription = null,
+                                tint = BrandEmerald,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = darkMapFieldColors(BrandBlue),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 14.dp)
+                            .testTag("fare_offer_input")
+                    )
+
+                    val buttonLabel = when (uiState.selectedMode) {
+                        ServiceMode.DELIVERY -> "Solicitar Envío de Paquete"
+                        ServiceMode.INTERCITY -> "Solicitar Viaje Interurbano"
+                        ServiceMode.STANDARD -> "Solicitar Viaje (Felipe Carrillo Puerto)"
+                    }
+
+                    Button(
+                        onClick = {
+                            val fareNum = uiState.fareOfferText.trim().toIntOrNull()
+                            when {
+                                uiState.pickupText.isBlank() -> Toast.makeText(
+                                    context,
+                                    "Indica el punto de recogida",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                uiState.destinationText.isBlank() -> Toast.makeText(
+                                    context,
+                                    "Indica el destino o punto de entrega",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                fareNum == null || fareNum < 25 -> Toast.makeText(
+                                    context,
+                                    "Ingresa una oferta válida (mínimo $25 MXN)",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                else -> showConfirmDialog = true
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BrandEmerald,
+                            contentColor = PureWhite
+                        ),
+                        shape = RoundedCornerShape(24.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .testTag("request_trip_button")
+                    ) {
+                        Text(buttonLabel, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -513,6 +849,7 @@ fun PassengerMapScreen(
 
 @Composable
 private fun ServiceModeChip(
+    icon: ImageVector,
     label: String,
     selected: Boolean,
     testTag: String,
@@ -524,12 +861,15 @@ private fun ServiceModeChip(
             containerColor = if (selected) BrandBlue else Slate800,
             contentColor = if (selected) PureWhite else Slate300
         ),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
         shape = RoundedCornerShape(20.dp),
         modifier = Modifier
             .height(44.dp)
             .testTag(testTag)
     ) {
-        Text(text = label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, fontSize = 13.sp)
+        Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(text = label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
     }
 }
 
@@ -541,8 +881,8 @@ private fun darkMapFieldColors(strokeColor: Color) =
         focusedTextColor = PureWhite,
         unfocusedTextColor = PureWhite,
         focusedBorderColor = strokeColor,
-        unfocusedBorderColor = Slate800,
-        focusedLabelColor = Slate400,
+        unfocusedBorderColor = Slate700,
+        focusedLabelColor = Slate300,
         unfocusedLabelColor = Slate400,
         cursorColor = PureWhite
     )

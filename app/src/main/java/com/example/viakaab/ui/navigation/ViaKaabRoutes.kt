@@ -22,7 +22,14 @@ sealed interface ViaKaabRoute {
     @Serializable
     data class PassengerMap(
         val modeName: String = "STANDARD",
-        val assistanceNote: String = ""
+        val assistanceNote: String = "",
+        val initialDestinationQuery: String = ""
+    ) : ViaKaabRoute
+
+    @Serializable
+    data class EatsMarketplace(
+        val categoryKey: String = "ALL",
+        val storeId: String = ""
     ) : ViaKaabRoute
 
     @Serializable

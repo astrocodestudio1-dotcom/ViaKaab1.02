@@ -130,10 +130,10 @@ class GoogleMapsRepository {
 
     fun suggestFareMxn(distanceKm: Double, mode: ServiceMode): Int {
         val raw = when (mode) {
-            ServiceMode.STANDARD -> 35.0 + distanceKm * 10.0
-            ServiceMode.DELIVERY -> 30.0 + distanceKm * 9.0
-            ServiceMode.INTERCITY -> 90.0 + distanceKm * 8.5
+            ServiceMode.STANDARD -> 20.0 + distanceKm * 8.0
+            ServiceMode.DELIVERY -> 25.0 + distanceKm * 9.0
+            ServiceMode.INTERCITY -> 80.0 + distanceKm * 8.5
         }
-        return ((raw / 5.0).roundToInt() * 5).coerceAtLeast(35)
+        return ((raw / 5.0).roundToInt() * 5).coerceAtLeast(25)
     }
 }

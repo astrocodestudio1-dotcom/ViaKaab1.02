@@ -1,11 +1,18 @@
 package com.example.viakaab
 
+import android.app.PictureInPictureParams
+import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -19,6 +26,7 @@ import com.example.viakaab.model.ServiceMode
 import com.example.viakaab.ui.navigation.ViaKaabRoute
 import com.example.viakaab.ui.screens.DriverMapScreen
 import com.example.viakaab.ui.screens.DriverProfileScreen
+import com.example.viakaab.ui.screens.EatsMarketplaceScreen
 import com.example.viakaab.ui.screens.EditProfileScreen
 import com.example.viakaab.ui.screens.FaceVerificationScreen
 import com.example.viakaab.ui.screens.GeminiChatScreen
@@ -40,19 +48,47 @@ import com.example.viakaab.viewmodel.MainAppViewModel
 import com.example.viakaab.viewmodel.MapViewModel
 
 class MainActivity : ComponentActivity() {
+    private var isInPipMode by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             ViaKaabTheme {
-                ViaKaabAppNavigation()
+                ViaKaabAppNavigation(
+                    isInPipMode = isInPipMode,
+                    onEnterFloatingPip = { enterFloatingPipMode() }
+                )
             }
         }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isInPipMode = isInPictureInPictureMode
+    }
+
+    private fun enterFloatingPipMode(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            return runCatching {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 10))
+                    .build()
+                enterPictureInPictureMode(params)
+            }.getOrDefault(false)
+        }
+        return false
     }
 }
 
 @Composable
-fun ViaKaabAppNavigation() {
+fun ViaKaabAppNavigation(
+    isInPipMode: Boolean = false,
+    onEnterFloatingPip: () -> Boolean = { false }
+) {
     val context = LocalContext.current
     val navController = rememberNavController()
 
@@ -154,6 +190,22 @@ fun ViaKaabAppNavigation() {
                         )
                     )
                 },
+                onOpenQuickDestination = { mode, destinationQuery ->
+                    navController.navigate(
+                        ViaKaabRoute.PassengerMap(
+                            modeName = mode.name,
+                            initialDestinationQuery = destinationQuery
+                        )
+                    )
+                },
+                onOpenEatsMarketplace = { categoryKey, storeId ->
+                    navController.navigate(
+                        ViaKaabRoute.EatsMarketplace(
+                            categoryKey = categoryKey,
+                            storeId = storeId
+                        )
+                    )
+                },
                 onOpenDriverMap = {
                     navController.navigate(ViaKaabRoute.DriverMap) {
                         popUpTo(ViaKaabRoute.MainContainer) { inclusive = true }
@@ -181,15 +233,56 @@ fun ViaKaabAppNavigation() {
                 mapViewModel = mapViewModel,
                 initialMode = initialMode,
                 initialAssistanceNote = route.assistanceNote,
+                initialDestinationQuery = route.initialDestinationQuery,
                 onBack = { navController.popBackStack() },
                 onOpenProfileMenu = { navController.navigate(ViaKaabRoute.Profile) }
+            )
+        }
+
+        composable<ViaKaabRoute.EatsMarketplace> { backStackEntry ->
+            val route = backStackEntry.toRoute<ViaKaabRoute.EatsMarketplace>()
+            EatsMarketplaceScreen(
+                mapViewModel = mapViewModel,
+                initialCategoryKey = route.categoryKey,
+                initialStoreId = route.storeId,
+                onBack = { navController.popBackStack() },
+                onOpenCustomDeliveryMap = {
+                    navController.navigate(
+                        ViaKaabRoute.PassengerMap(
+                            modeName = ServiceMode.DELIVERY.name,
+                            assistanceNote = "Mandado personalizado ViaKaab Eats"
+                        )
+                    ) {
+                        popUpTo(ViaKaabRoute.MainContainer)
+                    }
+                },
+                onOrderConfirmed = {
+                    navController.navigate(
+                        ViaKaabRoute.PassengerMap(
+                            modeName = ServiceMode.DELIVERY.name,
+                            assistanceNote = ""
+                        )
+                    ) {
+                        popUpTo(ViaKaabRoute.MainContainer)
+                    }
+                }
             )
         }
 
         composable<ViaKaabRoute.DriverMap> {
             DriverMapScreen(
                 mapViewModel = mapViewModel,
-                onOpenDriverProfile = { navController.navigate(ViaKaabRoute.DriverProfile) }
+                isInPipMode = isInPipMode,
+                onEnterFloatingPip = onEnterFloatingPip,
+                onOpenDriverProfile = { navController.navigate(ViaKaabRoute.DriverProfile) },
+                onSwitchRole = { newRole ->
+                    mainAppViewModel.switchRole(newRole)
+                    if (!newRole.isDriverRole) {
+                        navController.navigate(ViaKaabRoute.MainContainer) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                }
             )
         }
 
@@ -265,6 +358,7 @@ fun ViaKaabAppNavigation() {
 
         composable<ViaKaabRoute.Support> {
             SupportScreen(
+                viewModel = mainAppViewModel,
                 onBack = { navController.popBackStack() },
                 onOpenTerms = { navController.navigate(ViaKaabRoute.Terms) }
             )

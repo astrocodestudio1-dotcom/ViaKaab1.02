@@ -5,7 +5,9 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -27,6 +30,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.SupportAgent
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -34,9 +47,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -48,6 +61,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -58,17 +74,19 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.viakaab.model.UserRole
+import com.example.viakaab.ui.theme.BrandBlue
 import com.example.viakaab.ui.theme.BrandEmerald
+import com.example.viakaab.ui.theme.BrandGold
 import com.example.viakaab.ui.theme.BrandRed
 import com.example.viakaab.ui.theme.BrandSky
 import com.example.viakaab.ui.theme.BrandSkyTint
-import com.example.viakaab.ui.theme.LightSurface
-import com.example.viakaab.ui.theme.PureBlack
 import com.example.viakaab.ui.theme.PureWhite
+import com.example.viakaab.ui.theme.Slate300
 import com.example.viakaab.ui.theme.Slate400
-import com.example.viakaab.ui.theme.Slate500
-import com.example.viakaab.ui.theme.Slate600
+import com.example.viakaab.ui.theme.Slate700
+import com.example.viakaab.ui.theme.Slate800
 import com.example.viakaab.ui.theme.Slate900
+import com.example.viakaab.ui.theme.Slate950
 import com.example.viakaab.viewmodel.MainAppViewModel
 
 @Composable
@@ -84,6 +102,7 @@ fun ProfileScreen(
 ) {
     val session by viewModel.session.collectAsStateWithLifecycle()
     val trips by viewModel.trips.collectAsStateWithLifecycle()
+    val passengerRating by viewModel.passengerRating.collectAsStateWithLifecycle()
     var showLogoutConfirm by rememberSaveable { mutableStateOf(false) }
     var showTripsDialog by rememberSaveable { mutableStateOf(false) }
     var showRoleDialog by rememberSaveable { mutableStateOf(false) }
@@ -91,7 +110,10 @@ fun ProfileScreen(
     if (showLogoutConfirm) {
         AlertDialog(
             onDismissRequest = { showLogoutConfirm = false },
-            title = { Text("Cerrar sesión") },
+            containerColor = Slate900,
+            titleContentColor = PureWhite,
+            textContentColor = Slate300,
+            title = { Text("Cerrar sesión", fontWeight = FontWeight.Bold) },
             text = { Text("¿Estás seguro de que deseas salir de tu cuenta?") },
             confirmButton = {
                 TextButton(onClick = {
@@ -99,12 +121,12 @@ fun ProfileScreen(
                     viewModel.logout()
                     onLogout()
                 }) {
-                    Text("Sí, salir", color = BrandRed)
+                    Text("Sí, salir", color = BrandRed, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showLogoutConfirm = false }) {
-                    Text("Cancelar")
+                    Text("Cancelar", color = Slate400)
                 }
             }
         )
@@ -113,27 +135,39 @@ fun ProfileScreen(
     if (showTripsDialog) {
         AlertDialog(
             onDismissRequest = { showTripsDialog = false },
-            title = { Text("Mis Viajes (${trips.size})") },
+            containerColor = Slate900,
+            titleContentColor = PureWhite,
+            textContentColor = Slate300,
+            title = { Text("Mis Viajes (${trips.size})", fontWeight = FontWeight.Bold) },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (trips.isEmpty()) {
-                        Text("Aún no tienes viajes registrados en esta cuenta.")
+                        Text("Aún no tienes viajes registrados en esta cuenta.", color = Slate400)
                     } else {
                         trips.forEach { trip ->
-                            Column {
-                                Text(
-                                    text = "${trip.origin} ➔ ${trip.destination}",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    text = "${trip.fareMxn} · ${trip.timestampLabel} · ${trip.statusLabel}",
-                                    fontSize = 12.sp,
-                                    color = Slate600
-                                )
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Slate800,
+                                border = BorderStroke(1.dp, Slate700),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = "${trip.origin} ➔ ${trip.destination}",
+                                        color = PureWhite,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = "${trip.fareMxn} · ${trip.timestampLabel} · ${trip.statusLabel}",
+                                        fontSize = 12.sp,
+                                        color = BrandEmerald
+                                    )
+                                }
                             }
                         }
                     }
@@ -141,7 +175,7 @@ fun ProfileScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showTripsDialog = false }) {
-                    Text("Cerrar")
+                    Text("Cerrar", color = BrandSkyTint, fontWeight = FontWeight.Bold)
                 }
             }
         )
@@ -150,26 +184,50 @@ fun ProfileScreen(
     if (showRoleDialog) {
         AlertDialog(
             onDismissRequest = { showRoleDialog = false },
-            title = { Text("Seleccionar modo de uso") },
+            containerColor = Slate900,
+            titleContentColor = PureWhite,
+            textContentColor = Slate300,
+            title = { Text("Seleccionar modo de uso", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     UserRole.entries.forEach { role ->
-                        OutlinedButton(
-                            onClick = {
-                                showRoleDialog = false
-                                onSwitchRole(role)
-                            },
-                            modifier = Modifier.fillMaxWidth()
+                        val active = role == session.role
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (active) BrandEmerald.copy(alpha = 0.2f) else Slate800
+                            ),
+                            border = BorderStroke(1.dp, if (active) BrandEmerald else Slate700),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showRoleDialog = false
+                                    onSwitchRole(role)
+                                }
                         ) {
-                            val check = if (role == session.role) " ✓" else ""
-                            Text("${role.displayName}$check")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = role.displayName,
+                                    color = PureWhite,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (active) {
+                                    Text("Activo", color = BrandEmerald, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
                 }
             },
             confirmButton = {
                 TextButton(onClick = { showRoleDialog = false }) {
-                    Text("Cancelar")
+                    Text("Cancelar", color = Slate400)
                 }
             }
         )
@@ -178,7 +236,7 @@ fun ProfileScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(LightSurface)
+            .background(Brush.verticalGradient(listOf(Slate950, Slate900, Slate950)))
             .systemBarsPadding(),
         contentAlignment = Alignment.TopCenter
     ) {
@@ -190,92 +248,175 @@ fun ProfileScreen(
                 .padding(20.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 16.dp)) {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Regresar", tint = Slate900)
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(Slate800)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Regresar", tint = PureWhite)
                 }
+                Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = "Mi perfil",
-                    color = Slate900,
+                    color = PureWhite,
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            Box(
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = Slate800),
+                border = BorderStroke(1.dp, BrandEmerald.copy(alpha = 0.38f)),
                 modifier = Modifier
-                    .size(88.dp)
-                    .align(Alignment.CenterHorizontally)
-                    .clip(CircleShape)
-                    .background(BrandSkyTint),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .padding(bottom = 18.dp)
             ) {
-                if (session.profileImageUri.isNotBlank()) {
-                    AsyncImage(
-                        model = Uri.parse(session.profileImageUri),
-                        contentDescription = "Foto de perfil",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Brush.linearGradient(listOf(Slate900, Slate800)))
+                        .padding(22.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(92.dp)
+                            .clip(CircleShape)
+                            .border(2.5.dp, BrandEmerald, CircleShape)
+                            .background(Slate700),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (session.profileImageUri.isNotBlank()) {
+                            AsyncImage(
+                                model = Uri.parse(session.profileImageUri),
+                                contentDescription = "Foto de perfil",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Text(
+                                text = session.initials,
+                                color = PureWhite,
+                                fontSize = 30.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
                     Text(
-                        text = session.initials,
-                        color = BrandSky,
-                        fontSize = 28.sp,
+                        text = session.effectiveDisplayName,
+                        color = PureWhite,
+                        fontSize = 21.sp,
                         fontWeight = FontWeight.Bold
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val ratingText = if (passengerRating.ratingCount > 0) {
+                        "${passengerRating.displayLabel} (${passengerRating.ratingCount})"
+                    } else {
+                        "0"
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(Slate900)
+                                .border(1.dp, Slate700, RoundedCornerShape(50))
+                                .padding(horizontal = 12.dp, vertical = 5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Star,
+                                contentDescription = "Calificación",
+                                tint = BrandGold,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = ratingText,
+                                color = PureWhite,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            text = "${session.role.displayName} · ${trips.size} viajes",
+                            color = Slate300,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = session.effectiveDisplayName,
-                color = Slate900,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-            Text(
-                text = "${session.role.displayName} · ★ 5.0 · ${trips.size} viajes",
-                color = Slate500,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 24.dp)
-            )
-
             if (session.role.isDriverRole) {
                 val panelTitle = when (session.role) {
-                    UserRole.DRIVER -> "🚗 Panel de Conductor"
-                    UserRole.DELIVERY -> "🛵 Panel de Repartidor"
-                    UserRole.BOTH -> "🚗🛵 Panel de Conductor y Repartidor"
-                    else -> "🚗 Panel de Conductor / Repartidor"
+                    UserRole.DRIVER -> "Panel de Conductor"
+                    UserRole.DELIVERY -> "Panel de Repartidor"
+                    UserRole.BOTH -> "Panel de Conductor y Repartidor"
+                    else -> "Panel de Conductor / Repartidor"
                 }
                 Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Slate900),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Slate800),
+                    border = BorderStroke(1.dp, BrandEmerald.copy(alpha = 0.45f)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 16.dp)
+                        .padding(bottom = 14.dp)
                         .clickable(onClick = onOpenDriverProfile)
                 ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
-                        Text(panelTitle, color = PureWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Registra tu vehículo, placas, licencia e INE.",
-                            color = Slate400,
-                            fontSize = 13.sp
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(BrandEmerald.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.DirectionsCar,
+                                contentDescription = null,
+                                tint = BrandEmerald,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(panelTitle, color = PureWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "Vehículo, placas, licencia e INE.",
+                                color = Slate400,
+                                fontSize = 13.sp
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = Slate400
                         )
                     }
                 }
             }
 
             Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PureWhite),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = Slate800),
+                border = BorderStroke(1.dp, Slate700),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = 14.dp)
                     .clickable { showTripsDialog = true }
             ) {
                 Row(
@@ -284,108 +425,185 @@ fun ProfileScreen(
                         .padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Mis viajes", color = Slate900, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Consulta viajes, tarifas y comprobantes.", color = Slate500, fontSize = 13.sp)
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(BrandEmerald.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.History,
+                            contentDescription = null,
+                            tint = BrandEmerald,
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
-                    Text("${trips.size}", color = BrandEmerald, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Mis viajes", color = PureWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text("Consulta viajes, tarifas y comprobantes.", color = Slate400, fontSize = 13.sp)
+                    }
+                    Text("${trips.size}", color = BrandEmerald, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
                 }
             }
 
             Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PureWhite),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = Slate800),
+                border = BorderStroke(1.dp, Slate700),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = 14.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Datos personales", color = Slate900, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Nombre: ${session.effectiveDisplayName}", color = Slate600, fontSize = 14.sp)
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.Person,
+                            contentDescription = null,
+                            tint = BrandSkyTint,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Datos personales", color = PureWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("Nombre: ${session.effectiveDisplayName}", color = Slate300, fontSize = 14.sp)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         "Correo: ${session.email.ifBlank { "No disponible" }}",
-                        color = Slate600,
+                        color = Slate400,
                         fontSize = 14.sp
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         "Teléfono: ${session.phone.ifBlank { "Sin registrar" }}",
-                        color = Slate600,
+                        color = Slate400,
                         fontSize = 14.sp
                     )
                 }
             }
 
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PureWhite),
+            ProfileMenuActionCard(
+                icon = Icons.Filled.Edit,
+                iconTint = BrandSkyTint,
+                title = "Editar perfil",
+                subtitle = "Foto, nombre completo y teléfono",
+                onClick = onOpenEditProfile,
                 modifier = Modifier
-                    .fillMaxWidth()
                     .padding(bottom = 12.dp)
-                    .clickable(onClick = onOpenEditProfile)
                     .testTag("profile_edit_card")
-            ) {
-                Text(
-                    text = "Editar perfil",
-                    color = Slate900,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
+            )
+
+            ProfileMenuActionCard(
+                icon = Icons.Filled.SwapHoriz,
+                iconTint = BrandBlue,
+                title = "Cambiar rol",
+                subtitle = "Modo actual: ${session.role.displayName}",
+                onClick = { showRoleDialog = true },
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            ProfileMenuActionCard(
+                icon = Icons.Filled.CreditCard,
+                iconTint = BrandEmerald,
+                title = "Métodos de pago",
+                subtitle = "Efectivo, Tarjeta, Transferencia SPEI",
+                onClick = onOpenPaymentMethods,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            ProfileMenuActionCard(
+                icon = Icons.Filled.SupportAgent,
+                iconTint = BrandSky,
+                title = "Soporte y Seguridad",
+                subtitle = "Policía FCP, WhatsApp y línea ViaKaab",
+                onClick = onOpenSupport,
+                modifier = Modifier.padding(bottom = 18.dp)
+            )
 
             Card(
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PureWhite),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 20.dp)
-                    .clickable { showRoleDialog = true }
-            ) {
-                Text(
-                    text = "Cambiar rol (Actual: ${session.role.displayName})",
-                    color = BrandSky,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-
-            Text(
-                text = "Métodos de pago (Efectivo, Tarjeta, Transferencia SPEI)",
-                color = Slate900,
-                fontSize = 15.sp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onOpenPaymentMethods)
-                    .padding(vertical = 12.dp)
-            )
-
-            Text(
-                text = "Soporte",
-                color = Slate900,
-                fontSize = 15.sp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onOpenSupport)
-                    .padding(vertical = 12.dp)
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "Cerrar sesión",
-                color = BrandRed,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
+                colors = CardDefaults.cardColors(containerColor = BrandRed.copy(alpha = 0.14f)),
+                border = BorderStroke(1.dp, BrandRed.copy(alpha = 0.38f)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { showLogoutConfirm = true }
-                    .padding(vertical = 14.dp)
                     .testTag("profile_logout_button")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Logout,
+                        contentDescription = null,
+                        tint = BrandRed,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Cerrar sesión",
+                        color = BrandRed,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileMenuActionCard(
+    icon: ImageVector,
+    iconTint: Color,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Slate800),
+        border = BorderStroke(1.dp, Slate700),
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(iconTint.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(21.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = PureWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = Slate400, fontSize = 12.sp)
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = Slate400
             )
         }
     }
@@ -417,10 +635,22 @@ fun EditProfileScreen(
         }
     }
 
+    val darkFieldColors = OutlinedTextFieldDefaults.colors(
+        focusedContainerColor = Slate900,
+        unfocusedContainerColor = Slate900,
+        focusedTextColor = PureWhite,
+        unfocusedTextColor = PureWhite,
+        focusedBorderColor = BrandEmerald,
+        unfocusedBorderColor = Slate700,
+        focusedLabelColor = BrandEmerald,
+        unfocusedLabelColor = Slate400,
+        cursorColor = BrandEmerald
+    )
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(LightSurface)
+            .background(Brush.verticalGradient(listOf(Slate950, Slate900, Slate950)))
             .systemBarsPadding()
             .imePadding(),
         contentAlignment = Alignment.TopCenter
@@ -439,17 +669,25 @@ fun EditProfileScreen(
                     .fillMaxWidth()
                     .padding(bottom = 24.dp)
             ) {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Regresar", tint = Slate900)
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(Slate800)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Regresar", tint = PureWhite)
                 }
-                Text("Editar Perfil", color = Slate900, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.width(12.dp))
+                Text("Editar Perfil", color = PureWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             }
 
             Box(
                 modifier = Modifier
-                    .size(100.dp)
+                    .size(104.dp)
                     .clip(CircleShape)
-                    .background(BrandSkyTint)
+                    .border(2.5.dp, BrandEmerald, CircleShape)
+                    .background(Slate800)
                     .clickable {
                         photoPickerLauncher.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -467,7 +705,7 @@ fun EditProfileScreen(
                 } else {
                     Text(
                         text = session.initials,
-                        color = BrandSky,
+                        color = PureWhite,
                         fontSize = 32.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -476,7 +714,7 @@ fun EditProfileScreen(
 
             Text(
                 text = "Cambiar foto de perfil",
-                color = BrandSky,
+                color = BrandEmerald,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
@@ -495,12 +733,8 @@ fun EditProfileScreen(
                 onValueChange = { name = it },
                 label = { Text("Nombre completo") },
                 singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = PureBlack,
-                    unfocusedTextColor = PureBlack,
-                    focusedBorderColor = Slate900,
-                    unfocusedBorderColor = Slate500
-                ),
+                colors = darkFieldColors,
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 16.dp)
@@ -513,12 +747,8 @@ fun EditProfileScreen(
                 label = { Text("Teléfono") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = PureBlack,
-                    unfocusedTextColor = PureBlack,
-                    focusedBorderColor = Slate900,
-                    unfocusedBorderColor = Slate500
-                ),
+                colors = darkFieldColors,
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 28.dp)
@@ -535,8 +765,8 @@ fun EditProfileScreen(
                     }
                 },
                 enabled = !actionState.isSaving,
-                colors = ButtonDefaults.buttonColors(containerColor = Slate900, contentColor = PureWhite),
-                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = BrandEmerald, contentColor = PureWhite),
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.example.viakaab.model.DocumentVerificationState
 import com.example.viakaab.model.InboxMessage
+import com.example.viakaab.model.PassengerRatingState
 import com.example.viakaab.model.PaymentMethodType
 import com.example.viakaab.model.SavedCardInfo
 import com.example.viakaab.model.ScheduledRide
@@ -49,6 +50,15 @@ class SessionRepository(context: Context) {
 
     private val _docStatus = MutableStateFlow(readDocStatus())
     val docStatus: StateFlow<DocumentVerificationState> = _docStatus.asStateFlow()
+
+    private val _supportPhone = MutableStateFlow(readSupportPhone())
+    val supportPhone: StateFlow<String> = _supportPhone.asStateFlow()
+
+    private val _trustedContactPhone = MutableStateFlow(readTrustedContactPhone())
+    val trustedContactPhone: StateFlow<String> = _trustedContactPhone.asStateFlow()
+
+    private val _passengerRating = MutableStateFlow(readPassengerRating())
+    val passengerRating: StateFlow<PassengerRatingState> = _passengerRating.asStateFlow()
 
     private val _inboxMessages = MutableStateFlow(
         listOf(
@@ -137,6 +147,26 @@ class SessionRepository(context: Context) {
         prefs.edit().putString(KEY_DOC_STATUS_JSON, json.encodeToString(state)).apply()
     }
 
+    private fun readSupportPhone(): String {
+        return prefs.getString(KEY_SUPPORT_PHONE, DEFAULT_SUPPORT_PHONE)
+            .orEmpty()
+            .ifBlank { DEFAULT_SUPPORT_PHONE }
+    }
+
+    private fun readTrustedContactPhone(): String {
+        return prefs.getString(KEY_TRUSTED_CONTACT_PHONE, "").orEmpty()
+    }
+
+    private fun readPassengerRating(): PassengerRatingState {
+        val raw = prefs.getString(KEY_PASSENGER_RATING_JSON, null) ?: return PassengerRatingState()
+        return runCatching { json.decodeFromString<PassengerRatingState>(raw) }
+            .getOrDefault(PassengerRatingState())
+    }
+
+    private fun persistPassengerRating(state: PassengerRatingState) {
+        prefs.edit().putString(KEY_PASSENGER_RATING_JSON, json.encodeToString(state)).apply()
+    }
+
     fun createLoginSession(email: String, name: String, role: UserRole, token: String) {
         prefs.edit()
             .putBoolean(KEY_IS_LOGGED_IN, true)
@@ -185,12 +215,14 @@ class SessionRepository(context: Context) {
     fun logout() {
         val savedEmail = prefs.getString(KEY_SAVED_EMAIL, "").orEmpty()
         val savedPassword = prefs.getString(KEY_SAVED_PASSWORD, "").orEmpty()
+        val savedSupportPhone = readSupportPhone()
         prefs.edit()
             .clear()
             .putBoolean(KEY_IS_LOGGED_IN, false)
             .putBoolean(KEY_HAS_SEEN_WELCOME, true)
             .putString(KEY_SAVED_EMAIL, savedEmail)
             .putString(KEY_SAVED_PASSWORD, savedPassword)
+            .putString(KEY_SUPPORT_PHONE, savedSupportPhone)
             .apply()
         _session.value = readSession()
         _trips.value = emptyList()
@@ -199,6 +231,8 @@ class SessionRepository(context: Context) {
         _vehicleInfo.value = VehicleInfo()
         _docStatus.value = DocumentVerificationState()
         _selectedPayment.value = PaymentMethodType.CASH
+        _trustedContactPhone.value = ""
+        _passengerRating.value = PassengerRatingState()
     }
 
     fun addTripRequest(origin: String, destination: String, fareMxn: String, mode: ServiceMode) {
@@ -324,7 +358,52 @@ class SessionRepository(context: Context) {
         _inboxMessages.update { msgs -> msgs.map { it.copy(isUnread = false) } }
     }
 
+    fun saveSupportPhone(phone: String) {
+        val cleaned = phone.trim()
+        if (cleaned.isNotBlank()) {
+            prefs.edit().putString(KEY_SUPPORT_PHONE, cleaned).apply()
+            _supportPhone.value = cleaned
+        }
+    }
+
+    fun saveTrustedContactPhone(phone: String) {
+        val cleaned = phone.trim()
+        prefs.edit().putString(KEY_TRUSTED_CONTACT_PHONE, cleaned).apply()
+        _trustedContactPhone.value = cleaned
+    }
+
+    fun addPassengerRating(stars: Int, raterRoleLabel: String, comment: String = "") {
+        val safeStars = stars.coerceIn(1, 5)
+        var updatedRating = PassengerRatingState()
+        _passengerRating.update { current ->
+            updatedRating = current.copy(
+                totalStars = current.totalStars + safeStars,
+                ratingCount = current.ratingCount + 1,
+                lastRaterRole = raterRoleLabel,
+                lastComment = comment.trim()
+            )
+            persistPassengerRating(updatedRating)
+            updatedRating
+        }
+        _inboxMessages.update { msgs ->
+            listOf(
+                InboxMessage(
+                    id = "inbox_rate_${System.currentTimeMillis()}",
+                    title = "Calificación recibida: ★ $safeStars",
+                    body = "Un $raterRoleLabel calificó tu viaje. Tu calificación promedio ahora es ★ ${updatedRating.displayLabel}.",
+                    timeLabel = "Ahora",
+                    isUnread = true
+                )
+            ) + msgs
+        }
+    }
+
     companion object {
+        const val DEFAULT_SUPPORT_PHONE = "+52 983 000 0000"
+        const val FCP_POLICE_PHONE = "9838340369"
+        const val FCP_POLICE_DISPLAY = "983 834 0369"
+        const val EMERGENCY_911 = "911"
+
         private const val PREF_NAME = "ViaKaabSession"
         private const val KEY_IS_LOGGED_IN = "isLoggedIn"
         private const val KEY_USER_EMAIL = "userEmail"
@@ -343,5 +422,8 @@ class SessionRepository(context: Context) {
         private const val KEY_SAVED_CARD_JSON = "savedCardJson"
         private const val KEY_VEHICLE_JSON = "vehicleJson"
         private const val KEY_DOC_STATUS_JSON = "docStatusJson"
+        private const val KEY_SUPPORT_PHONE = "supportPhone"
+        private const val KEY_TRUSTED_CONTACT_PHONE = "trustedContactPhone"
+        private const val KEY_PASSENGER_RATING_JSON = "passengerRatingJson"
     }
 }

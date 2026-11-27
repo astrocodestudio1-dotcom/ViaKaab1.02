@@ -32,6 +32,9 @@ class MainAppViewModel(
     val vehicleInfo = sessionRepository.vehicleInfo
     val docStatus = sessionRepository.docStatus
     val inboxMessages = sessionRepository.inboxMessages
+    val supportPhone = sessionRepository.supportPhone
+    val trustedContactPhone = sessionRepository.trustedContactPhone
+    val passengerRating = sessionRepository.passengerRating
 
     private val _actionState = MutableStateFlow(ProfileActionState())
     val actionState: StateFlow<ProfileActionState> = _actionState.asStateFlow()
@@ -165,6 +168,16 @@ class MainAppViewModel(
     fun switchRole(role: UserRole) {
         sessionRepository.selectRole(role)
         _actionState.update { it.copy(message = "Modo cambiado a ${role.displayName}") }
+    }
+
+    fun saveSupportPhone(phone: String) {
+        sessionRepository.saveSupportPhone(phone)
+        _actionState.update { it.copy(message = "Número de soporte actualizado: ${phone.trim()}") }
+    }
+
+    fun saveTrustedContactPhone(phone: String) {
+        sessionRepository.saveTrustedContactPhone(phone)
+        _actionState.update { it.copy(message = "Contacto de confianza guardado") }
     }
 
     fun logout() {

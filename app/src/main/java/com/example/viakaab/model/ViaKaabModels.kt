@@ -36,6 +36,61 @@ enum class DriverTripStage {
     TRIP_IN_PROGRESS
 }
 
+enum class DriverRequestCategory(val label: String) {
+    PASSENGER_RIDE("Viaje Pasajero"),
+    FOOD_ORDER("Comida / Cafetería / Fonda"),
+    PHARMACY_ORDER("Farmacia"),
+    SUPERMARKET_ORDER("Súper / Despensa"),
+    PARCEL_DELIVERY("Envío de Paquete")
+}
+
+enum class DriverFeedFilter(val label: String) {
+    ALL("Todos"),
+    PASSENGERS("Pasajeros"),
+    DELIVERY_EATS("Comida y Envíos")
+}
+
+enum class LiveTripPhase(val label: String) {
+    SEARCHING("Buscando conductor cercano..."),
+    DRIVER_ARRIVING("Conductor en camino hacia ti"),
+    IN_PROGRESS("Viaje en curso en tiempo real"),
+    COMPLETED("Viaje finalizado")
+}
+
+data class ActiveLiveTrip(
+    val id: String,
+    val origin: String,
+    val destination: String,
+    val pickupLat: Double,
+    val pickupLng: Double,
+    val destLat: Double,
+    val destLng: Double,
+    val fareMxn: Int,
+    val mode: ServiceMode,
+    val driverName: String = "Por asignar",
+    val vehicleSummary: String = "Unidad ViaKaab",
+    val phase: LiveTripPhase = LiveTripPhase.SEARCHING,
+    val driverLat: Double = pickupLat,
+    val driverLng: Double = pickupLng,
+    val etaMinutes: Int = 4
+)
+
+enum class MapVehicleType {
+    CAR,
+    MOTO
+}
+
+data class OnlineMapUnit(
+    val id: String,
+    val label: String,
+    val vehicleType: MapVehicleType,
+    val role: UserRole,
+    val lat: Double,
+    val lng: Double,
+    val headingDegrees: Float = 0f,
+    val isPrimary: Boolean = false
+)
+
 data class UserSession(
     val isLoggedIn: Boolean = false,
     val email: String = "",
@@ -124,8 +179,14 @@ data class DriverRideRequest(
     val startLng: Double,
     val endLat: Double,
     val endLng: Double,
-    val serviceTypeLabel: String = "Viaje Estándar"
-)
+    val serviceTypeLabel: String = "Viaje Estándar",
+    val requestCategory: DriverRequestCategory = DriverRequestCategory.PASSENGER_RIDE,
+    val orderDetails: String = "",
+    val passengerRatingLabel: String = "★ 4.9"
+) {
+    val isDeliveryOrCommerce: Boolean
+        get() = requestCategory != DriverRequestCategory.PASSENGER_RIDE
+}
 
 @Serializable
 data class DocumentVerificationState(
@@ -148,3 +209,21 @@ data class ChatMessage(
     val text: String,
     val isError: Boolean = false
 )
+
+@Serializable
+data class PassengerRatingState(
+    val totalStars: Int = 0,
+    val ratingCount: Int = 0,
+    val lastRaterRole: String = "",
+    val lastComment: String = ""
+) {
+    val average: Double
+        get() = if (ratingCount <= 0) 0.0 else totalStars.toDouble() / ratingCount
+
+    val displayLabel: String
+        get() = if (ratingCount <= 0) {
+            "0"
+        } else {
+            String.format(java.util.Locale.US, "%.1f", average)
+        }
+}

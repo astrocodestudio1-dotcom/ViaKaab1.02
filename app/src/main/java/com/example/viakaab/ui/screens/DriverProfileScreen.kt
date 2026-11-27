@@ -4,8 +4,11 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,18 +20,26 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -45,6 +56,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -57,13 +71,15 @@ import com.example.viakaab.model.UserRole
 import com.example.viakaab.ui.theme.BrandEmerald
 import com.example.viakaab.ui.theme.BrandRed
 import com.example.viakaab.ui.theme.BrandSky
-import com.example.viakaab.ui.theme.LightSurface
-import com.example.viakaab.ui.theme.PureBlack
+import com.example.viakaab.ui.theme.BrandSkyTint
 import com.example.viakaab.ui.theme.PureWhite
-import com.example.viakaab.ui.theme.Slate200
-import com.example.viakaab.ui.theme.Slate500
+import com.example.viakaab.ui.theme.Slate300
+import com.example.viakaab.ui.theme.Slate400
 import com.example.viakaab.ui.theme.Slate600
+import com.example.viakaab.ui.theme.Slate700
+import com.example.viakaab.ui.theme.Slate800
 import com.example.viakaab.ui.theme.Slate900
+import com.example.viakaab.ui.theme.Slate950
 import com.example.viakaab.viewmodel.MainAppViewModel
 
 @Composable
@@ -125,7 +141,10 @@ fun DriverProfileScreen(
     if (showLogoutConfirm) {
         AlertDialog(
             onDismissRequest = { showLogoutConfirm = false },
-            title = { Text("Cerrar sesión") },
+            containerColor = Slate900,
+            titleContentColor = PureWhite,
+            textContentColor = Slate300,
+            title = { Text("Cerrar sesión", fontWeight = FontWeight.Bold) },
             text = { Text("¿Estás seguro de que deseas salir?") },
             confirmButton = {
                 TextButton(onClick = {
@@ -133,12 +152,12 @@ fun DriverProfileScreen(
                     viewModel.logout()
                     onLogout()
                 }) {
-                    Text("Sí, salir", color = BrandRed)
+                    Text("Sí, salir", color = BrandRed, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showLogoutConfirm = false }) {
-                    Text("Cancelar")
+                    Text("Cancelar", color = Slate400)
                 }
             }
         )
@@ -147,28 +166,50 @@ fun DriverProfileScreen(
     if (showRoleDialog) {
         AlertDialog(
             onDismissRequest = { showRoleDialog = false },
-            title = { Text("Cambiar modo de uso") },
+            containerColor = Slate900,
+            titleContentColor = PureWhite,
+            textContentColor = Slate300,
+            title = { Text("Cambiar modo de uso", fontWeight = FontWeight.Bold) },
             text = {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     UserRole.entries.forEach { role ->
-                        OutlinedButton(
-                            onClick = {
-                                showRoleDialog = false
-                                onSwitchRole(role)
-                            },
+                        val active = role == session.role
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (active) BrandEmerald.copy(alpha = 0.2f) else Slate800
+                            ),
+                            border = BorderStroke(1.dp, if (active) BrandEmerald else Slate700),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 6.dp)
+                                .clickable {
+                                    showRoleDialog = false
+                                    onSwitchRole(role)
+                                }
                         ) {
-                            val check = if (role == session.role) " ✓" else ""
-                            Text("${role.displayName}$check")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = role.displayName,
+                                    color = PureWhite,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (active) {
+                                    Text("Activo", color = BrandEmerald, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
                 }
             },
             confirmButton = {
                 TextButton(onClick = { showRoleDialog = false }) {
-                    Text("Cancelar")
+                    Text("Cancelar", color = Slate400)
                 }
             }
         )
@@ -183,7 +224,7 @@ fun DriverProfileScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(LightSurface)
+            .background(Brush.verticalGradient(listOf(Slate950, Slate900, Slate950)))
             .systemBarsPadding()
             .imePadding(),
         contentAlignment = Alignment.TopCenter
@@ -196,48 +237,112 @@ fun DriverProfileScreen(
                 .padding(20.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 16.dp)) {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Regresar", tint = Slate900)
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(Slate800)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Regresar", tint = PureWhite)
                 }
+                Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = "Panel de $roleDisplay",
-                    color = Slate900,
+                    color = PureWhite,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
 
             Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PureWhite),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                border = BorderStroke(1.dp, BrandEmerald.copy(alpha = 0.4f)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 16.dp)
             ) {
-                Column(modifier = Modifier.padding(20.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Brush.linearGradient(listOf(Slate900, Slate800)))
+                        .padding(20.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(BrandEmerald.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.VerifiedUser,
+                                contentDescription = null,
+                                tint = BrandEmerald,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = session.effectiveDisplayName,
+                                color = PureWhite,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = session.email.ifBlank { "No disponible" },
+                                color = Slate300,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    val roleSummary = when (session.role) {
+                        UserRole.DELIVERY -> "Recibes envíos y pedidos de cafeterías, fondas, farmacias y súper."
+                        UserRole.BOTH -> "Recibes viajes de pasajeros + pedidos de comida, farmacia, súper y envíos."
+                        else -> "Recibes viajes de pasajeros locales e interurbanos en Carrillo Puerto."
+                    }
                     Text(
-                        text = "Nombre: ${session.effectiveDisplayName}",
-                        color = Slate900,
-                        fontSize = 18.sp,
+                        text = "Modo: $roleDisplay · Centro operativo FCP",
+                        color = BrandEmerald,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Correo: ${session.email.ifBlank { "No disponible" }}",
-                        color = Slate600,
-                        fontSize = 14.sp
+                        text = roleSummary,
+                        color = Slate300,
+                        fontSize = 12.sp
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Modo: $roleDisplay · ★ 4.9",
-                        color = BrandSky,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(UserRole.DRIVER, UserRole.DELIVERY, UserRole.BOTH, UserRole.PASSENGER).forEach { r ->
+                            val isSelected = session.role == r
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { onSwitchRole(r) },
+                                label = { Text(r.displayName, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = Slate900,
+                                    labelColor = Slate300,
+                                    selectedContainerColor = BrandEmerald,
+                                    selectedLabelColor = PureWhite
+                                )
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         text = "Progreso de verificación: ${docStatus.completedStepsCount} / 4 pasos",
-                        color = Slate600,
+                        color = Slate300,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -245,41 +350,73 @@ fun DriverProfileScreen(
                     LinearProgressIndicator(
                         progress = { docStatus.completedStepsCount / 4f },
                         color = BrandEmerald,
-                        trackColor = Slate200,
+                        trackColor = Slate950,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(6.dp)
+                            .height(7.dp)
+                            .clip(RoundedCornerShape(50))
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Button(
+                        onClick = onBack,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BrandEmerald,
+                            contentColor = PureWhite
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Icon(Icons.Filled.Map, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Ir al Mapa a Recibir Solicitudes", fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
                     OutlinedButton(
                         onClick = onOpenEditProfile,
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Slate600),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
                     ) {
-                        Text("Editar Perfil Personal (Nombre, Foto, Teléfono)", color = Slate900)
+                        Text("Editar Perfil Personal (Nombre, Foto, Teléfono)", color = PureWhite)
                     }
                 }
             }
 
             Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PureWhite),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Slate800),
+                border = BorderStroke(1.dp, Slate700),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 16.dp)
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text(
-                        text = if (savedVehicle.isRegistered) {
-                            "🚗 Vehículo Registrado (${savedVehicle.brand} ${savedVehicle.model})"
-                        } else {
-                            "🚗 Registro de Vehículo"
-                        },
-                        color = Slate900,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(bottom = 12.dp)
-                    )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.DirectionsCar,
+                            contentDescription = null,
+                            tint = BrandEmerald,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (savedVehicle.isRegistered) {
+                                "Vehículo Registrado (${savedVehicle.brand} ${savedVehicle.model})"
+                            } else {
+                                "Registro de Vehículo"
+                            },
+                            color = PureWhite,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
 
                     DriverTextField(brand, { brand = it }, "Marca (ej. Nissan, Honda, Italika)")
                     DriverTextField(model, { model = it }, "Modelo (ej. Versa, Civic, DM150)")
@@ -314,8 +451,8 @@ fun DriverProfileScreen(
                             }
                         },
                         enabled = !actionState.isSaving,
-                        colors = ButtonDefaults.buttonColors(containerColor = Slate900, contentColor = PureWhite),
-                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandEmerald, contentColor = PureWhite),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp)
@@ -327,29 +464,39 @@ fun DriverProfileScreen(
             }
 
             Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PureWhite),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Slate800),
+                border = BorderStroke(1.dp, Slate700),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 20.dp)
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text(
-                        text = "📄 Licencia y Documentos Legales",
-                        color = Slate900,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.Badge,
+                            contentDescription = null,
+                            tint = BrandSkyTint,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Licencia y Documentos Legales",
+                            color = PureWhite,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "Sube tus documentos vigentes para validación en Felipe Carrillo Puerto.",
-                        color = Slate500,
+                        color = Slate400,
                         fontSize = 14.sp,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
                     DocumentUploadBlock(
-                        title = "🪪 Credencial INE (Identificación Oficial)",
+                        title = "Credencial INE (Identificación Oficial)",
                         buttonLabel = "Subir Foto de INE",
                         statusText = docStatus.ineStatus,
                         isCompleted = docStatus.ineUploaded,
@@ -360,17 +507,20 @@ fun DriverProfileScreen(
 
                     OutlinedButton(
                         onClick = onOpenIneVerification,
-                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, BrandSky.copy(alpha = 0.65f)),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 16.dp)
+                            .height(48.dp)
+                            .padding(bottom = 4.dp)
                             .testTag("open_ine_camera_button")
                     ) {
-                        Text("Escanear INE con Cámara (Frente y Reverso)", color = BrandSky)
+                        Text("Escanear INE con Cámara (Frente y Reverso)", color = BrandSkyTint, fontWeight = FontWeight.SemiBold)
                     }
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     DocumentUploadBlock(
-                        title = "🪪 Licencia de Conducir",
+                        title = "Licencia de Conducir",
                         buttonLabel = "Subir Foto de Licencia de Conducir",
                         statusText = docStatus.licenseStatus,
                         isCompleted = docStatus.licenseUploaded,
@@ -380,7 +530,7 @@ fun DriverProfileScreen(
                     )
 
                     DocumentUploadBlock(
-                        title = "🛡️ Póliza de Seguro del Vehículo",
+                        title = "Póliza de Seguro del Vehículo",
                         buttonLabel = "Subir Póliza de Seguro (Opcional)",
                         statusText = docStatus.insuranceStatus,
                         isCompleted = docStatus.insuranceUploaded,
@@ -392,22 +542,28 @@ fun DriverProfileScreen(
 
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "🤳 Verificación Facial (Biometría)",
-                        color = Slate900,
+                        text = "Verificación Facial (Biometría)",
+                        color = PureWhite,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 6.dp)
+                        modifier = Modifier.padding(bottom = 8.dp)
                     )
                     OutlinedButton(
                         onClick = onOpenFaceVerification,
-                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (docStatus.faceVerified) BrandEmerald else BrandSky.copy(alpha = 0.65f)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(48.dp)
                             .testTag("open_face_verification_button")
                     ) {
                         Text(
                             text = if (docStatus.faceVerified) "Rostro Verificado ✓" else "Iniciar Verificación Facial",
-                            color = if (docStatus.faceVerified) BrandEmerald else BrandSky
+                            color = if (docStatus.faceVerified) BrandEmerald else BrandSkyTint,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
@@ -415,18 +571,20 @@ fun DriverProfileScreen(
 
             OutlinedButton(
                 onClick = { showRoleDialog = true },
-                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, Slate700),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 12.dp)
+                    .height(48.dp)
+                    .padding(bottom = 6.dp)
                     .testTag("driver_switch_role_button")
             ) {
-                Text("Cambiar modo (Pasajero / Conductor / Repartidor)", color = Slate900)
+                Text("Cambiar modo (Pasajero / Conductor / Repartidor)", color = PureWhite)
             }
 
             Text(
                 text = "Centro de Soporte 24/7",
-                color = BrandSky,
+                color = BrandSkyTint,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
@@ -464,16 +622,22 @@ private fun DriverTextField(
         onValueChange = onValueChange,
         label = { Text(label, fontSize = 13.sp) },
         singleLine = true,
+        shape = RoundedCornerShape(12.dp),
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = PureBlack,
-            unfocusedTextColor = PureBlack,
-            focusedBorderColor = Slate900,
-            unfocusedBorderColor = Slate500
+            focusedContainerColor = Slate900,
+            unfocusedContainerColor = Slate900,
+            focusedTextColor = PureWhite,
+            unfocusedTextColor = PureWhite,
+            focusedBorderColor = BrandEmerald,
+            unfocusedBorderColor = Slate700,
+            focusedLabelColor = BrandEmerald,
+            unfocusedLabelColor = Slate400,
+            cursorColor = BrandEmerald
         ),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 8.dp)
+            .padding(bottom = 10.dp)
     )
 }
 
@@ -488,29 +652,31 @@ private fun DocumentUploadBlock(
 ) {
     Text(
         text = title,
-        color = Slate900,
-        fontSize = 16.sp,
+        color = PureWhite,
+        fontSize = 15.sp,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(bottom = 6.dp)
+        modifier = Modifier.padding(bottom = 8.dp)
     )
     OutlinedButton(
         onClick = onUploadClick,
-        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Slate600),
+        shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 6.dp)
+            .height(48.dp)
+            .padding(bottom = 4.dp)
     ) {
-        Text(buttonLabel, color = Slate900)
+        Text(buttonLabel, color = PureWhite)
     }
     Text(
         text = statusText,
         color = when {
             isCompleted -> BrandEmerald
-            neutralColor -> Slate500
+            neutralColor -> Slate400
             else -> BrandRed
         },
         fontWeight = FontWeight.Bold,
-        fontSize = 14.sp,
-        modifier = Modifier.padding(bottom = 14.dp)
+        fontSize = 13.sp,
+        modifier = Modifier.padding(bottom = 16.dp)
     )
 }

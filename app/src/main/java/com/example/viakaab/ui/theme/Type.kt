@@ -27,19 +27,22 @@ val ViaKaabTypography = Typography(
         fontFamily = OutfitFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 32.sp,
-        lineHeight = 38.sp
+        lineHeight = 38.sp,
+        letterSpacing = (-0.5).sp
     ),
     headlineMedium = TextStyle(
         fontFamily = OutfitFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 24.sp,
-        lineHeight = 30.sp
+        lineHeight = 30.sp,
+        letterSpacing = (-0.3).sp
     ),
     headlineSmall = TextStyle(
         fontFamily = OutfitFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 20.sp,
-        lineHeight = 26.sp
+        lineHeight = 26.sp,
+        letterSpacing = (-0.2).sp
     ),
     titleLarge = TextStyle(
         fontFamily = OutfitFontFamily,
@@ -71,10 +74,18 @@ val ViaKaabTypography = Typography(
         fontSize = 14.sp,
         lineHeight = 20.sp
     ),
+    labelMedium = TextStyle(
+        fontFamily = PlusJakartaFontFamily,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        letterSpacing = 0.2.sp
+    ),
     labelSmall = TextStyle(
         fontFamily = PlusJakartaFontFamily,
         fontWeight = FontWeight.Medium,
-        fontSize = 12.sp,
-        lineHeight = 16.sp
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+        letterSpacing = 0.3.sp
     )
 )

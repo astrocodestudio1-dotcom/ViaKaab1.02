@@ -64,6 +64,7 @@ import com.example.viakaab.ui.theme.BrandEmerald
 import com.example.viakaab.ui.theme.BrandSky
 import com.example.viakaab.ui.theme.PureWhite
 import com.example.viakaab.ui.theme.Slate200
+import com.example.viakaab.ui.theme.Slate300
 import com.example.viakaab.ui.theme.Slate400
 import com.example.viakaab.ui.theme.Slate900
 import com.example.viakaab.ui.theme.Slate950
@@ -135,7 +136,10 @@ fun FaceVerificationScreen(
     if (showTutorial) {
         AlertDialog(
             onDismissRequest = onBack,
-            title = { Text("Instrucciones de Verificación Facial") },
+            containerColor = Slate900,
+            titleContentColor = PureWhite,
+            textContentColor = Slate300,
+            title = { Text("Instrucciones de Verificación Facial", fontWeight = FontWeight.Bold) },
             text = {
                 Text(
                     "Para garantizar la seguridad en ViaKaab (Felipe Carrillo Puerto):\n\n" +
@@ -147,12 +151,12 @@ fun FaceVerificationScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showTutorial = false }) {
-                    Text("¡Entendido!")
+                    Text("¡Entendido!", color = BrandEmerald, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = onBack) {
-                    Text("Cancelar")
+                    Text("Cancelar", color = Slate400)
                 }
             }
         )
@@ -325,7 +329,10 @@ fun IneVerificationScreen(
     if (showTutorial) {
         AlertDialog(
             onDismissRequest = onBack,
-            title = { Text("Verificación de INE") },
+            containerColor = Slate900,
+            titleContentColor = PureWhite,
+            textContentColor = Slate300,
+            title = { Text("Verificación de INE", fontWeight = FontWeight.Bold) },
             text = {
                 Text(
                     "Para validar tu identidad en Felipe Carrillo Puerto:\n\n" +
@@ -336,12 +343,12 @@ fun IneVerificationScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showTutorial = false }) {
-                    Text("Empezar")
+                    Text("Empezar", color = BrandEmerald, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = onBack) {
-                    Text("Cancelar")
+                    Text("Cancelar", color = Slate400)
                 }
             }
         )
