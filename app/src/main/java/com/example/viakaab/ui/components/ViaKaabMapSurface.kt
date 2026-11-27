@@ -3,6 +3,7 @@ package com.example.viakaab.ui.components
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
@@ -10,6 +11,7 @@ import android.graphics.Path as AndroidPath
 import android.graphics.RectF
 import android.graphics.Shader
 import android.os.Bundle
+import android.util.LruCache
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -21,6 +23,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -31,11 +34,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -43,7 +47,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,19 +63,26 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -111,14 +124,28 @@ import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.Polyline
 import com.google.android.gms.maps.model.PolylineOptions
 import com.google.android.gms.maps.model.RoundCap
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sinh
+import kotlin.math.tan
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 private const val UBER_DARK_MAP_STYLE_JSON = """
 [
@@ -140,11 +167,25 @@ private const val UBER_DARK_MAP_STYLE_JSON = """
 ]
 """
 
-fun hasConfiguredGoogleMapsKey(): Boolean {
-    val key = BuildConfig.MAPS_API_KEY.trim()
-    return key.isNotEmpty() &&
-        !key.startsWith("YOUR_", ignoreCase = true) &&
-        !key.equals("null", ignoreCase = true)
+fun hasConfiguredGoogleMapsKey(context: Context? = null): Boolean {
+    fun isValidKey(raw: String?): Boolean {
+        val key = raw?.trim().orEmpty()
+        return key.isNotEmpty() &&
+            !key.startsWith("YOUR_", ignoreCase = true) &&
+            !key.equals("null", ignoreCase = true)
+    }
+    if (isValidKey(BuildConfig.MAPS_API_KEY)) return true
+    if (context != null) {
+        val manifestKey = runCatching {
+            val appInfo = context.packageManager.getApplicationInfo(
+                context.packageName,
+                android.content.pm.PackageManager.GET_META_DATA
+            )
+            appInfo.metaData?.getString("com.google.android.geo.API_KEY")
+        }.getOrNull()
+        if (isValidKey(manifestKey)) return true
+    }
+    return false
 }
 
 @Composable
@@ -598,6 +639,7 @@ fun ViaKaabInteractiveMap(
     destinationTitle: String,
     destinationSnippet: String,
     routeColor: Color,
+    routePolylinePoints: List<LatLng> = emptyList(),
     hasLocationPermission: Boolean,
     landmarks: List<CarrilloLandmark>,
     onlineUnits: List<OnlineMapUnit> = emptyList(),
@@ -605,14 +647,18 @@ fun ViaKaabInteractiveMap(
     driverLabel: String = "Unidad ViaKaab",
     isSearchingDrivers: Boolean = false,
     etaMinutes: Int? = null,
+    topOverlayReserveDp: Dp = 90.dp,
     bottomOverlayReserveDp: Dp = 260.dp,
     badgeTopPaddingDp: Dp = 18.dp,
+    showTopStatusPill: Boolean = true,
+    recenterTrigger: Int = 0,
     onMapTap: ((LatLng) -> Unit)? = null,
     onGoogleMapReady: ((GoogleMap) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val useGoogleMaps = remember { hasConfiguredGoogleMapsKey() }
+    val density = LocalDensity.current
+    val useGoogleMaps = remember(context) { hasConfiguredGoogleMapsKey(context) }
 
     // Combine real online units + assigned driver (only if genuinely active; zero fake cars)
     val effectiveUnits = remember(onlineUnits, driverLatLng, driverLabel) {
@@ -676,6 +722,8 @@ fun ViaKaabInteractiveMap(
         val mapView = rememberMapViewWithLifecycle()
         var googleMapRef by remember { mutableStateOf<GoogleMap?>(null) }
         val unitMarkers = remember { mutableStateMapOf<String, Marker>() }
+        var routeGlowPolyline by remember { mutableStateOf<Polyline?>(null) }
+        var routeCorePolyline by remember { mutableStateOf<Polyline?>(null) }
         var shimmerPolyline by remember { mutableStateOf<Polyline?>(null) }
         var sonarCircleOuter by remember { mutableStateOf<Circle?>(null) }
         var sonarCircleInner by remember { mutableStateOf<Circle?>(null) }
@@ -685,15 +733,21 @@ fun ViaKaabInteractiveMap(
             googleMapRef,
             pickupLatLng,
             destinationLatLng,
+            routeColor,
             effectiveUnits.map { "${it.id}:${it.vehicleType}:${it.isPrimary}:${it.label}" },
             isSearchingDrivers,
             pickupTitle,
             destinationTitle,
-            hasLocationPermission
+            hasLocationPermission,
+            topOverlayReserveDp,
+            bottomOverlayReserveDp,
+            recenterTrigger
         ) {
             val gMap = googleMapRef ?: return@LaunchedEffect
             gMap.clear()
             unitMarkers.clear()
+            routeGlowPolyline = null
+            routeCorePolyline = null
             shimmerPolyline = null
             sonarCircleOuter = null
             sonarCircleInner = null
@@ -701,6 +755,10 @@ fun ViaKaabInteractiveMap(
             if (hasLocationPermission) {
                 runCatching { gMap.isMyLocationEnabled = true }
             }
+            val topPadPx = with(density) { topOverlayReserveDp.roundToPx() }
+            val bottomPadPx = with(density) { bottomOverlayReserveDp.roundToPx() }
+            val sidePadPx = with(density) { 12.dp.roundToPx() }
+            gMap.setPadding(sidePadPx, topPadPx, sidePadPx, bottomPadPx)
 
             // Dual Uber/DiDi radar sonar circles around pickup point
             sonarCircleOuter = gMap.addCircle(
@@ -757,8 +815,12 @@ fun ViaKaabInteractiveMap(
             }
 
             if (destinationLatLng != null) {
-                val curvedPoints = buildCurvedRoutePoints(pickupLatLng, destinationLatLng, steps = 44)
-                activeCurvedRoute = curvedPoints
+                val initialRoutePoints = if (routePolylinePoints.size >= 2) {
+                    routePolylinePoints
+                } else {
+                    buildCurvedRoutePoints(pickupLatLng, destinationLatLng, steps = 44)
+                }
+                activeCurvedRoute = initialRoutePoints
 
                 gMap.addMarker(
                     MarkerOptions()
@@ -770,9 +832,9 @@ fun ViaKaabInteractiveMap(
                         .icon(createUberDestinationDescriptor(context))
                 )
 
-                gMap.addPolyline(
+                routeGlowPolyline = gMap.addPolyline(
                     PolylineOptions()
-                        .addAll(curvedPoints)
+                        .addAll(initialRoutePoints)
                         .color(routeColor.copy(alpha = 0.28f).toArgb())
                         .width(22f)
                         .jointType(JointType.ROUND)
@@ -780,9 +842,9 @@ fun ViaKaabInteractiveMap(
                         .endCap(RoundCap())
                         .zIndex(1f)
                 )
-                gMap.addPolyline(
+                routeCorePolyline = gMap.addPolyline(
                     PolylineOptions()
-                        .addAll(curvedPoints)
+                        .addAll(initialRoutePoints)
                         .color(routeColor.toArgb())
                         .width(10f)
                         .jointType(JointType.ROUND)
@@ -792,7 +854,7 @@ fun ViaKaabInteractiveMap(
                 )
                 shimmerPolyline = gMap.addPolyline(
                     PolylineOptions()
-                        .addAll(curvedPoints.take(8))
+                        .addAll(initialRoutePoints.take(8))
                         .color(BrandSkyTint.copy(alpha = 0.92f).toArgb())
                         .width(12f)
                         .jointType(JointType.ROUND)
@@ -805,9 +867,17 @@ fun ViaKaabInteractiveMap(
                     val builder = LatLngBounds.Builder()
                         .include(pickupLatLng)
                         .include(destinationLatLng)
-                    curvedPoints.forEach { builder.include(it) }
+                    initialRoutePoints.forEach { builder.include(it) }
                     effectiveUnits.forEach { builder.include(LatLng(it.lat, it.lng)) }
-                    gMap.animateCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 145))
+                    val bounds = builder.build()
+                    val padPx = with(density) { 48.dp.roundToPx() }
+                    runCatching {
+                        gMap.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, padPx))
+                    }.onFailure {
+                        gMap.setOnMapLoadedCallback {
+                            runCatching { gMap.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, padPx)) }
+                        }
+                    }
                 }
             } else {
                 activeCurvedRoute = emptyList()
@@ -821,6 +891,19 @@ fun ViaKaabInteractiveMap(
                     .build()
                 gMap.animateCamera(CameraUpdateFactory.newCameraPosition(camPos))
             }
+        }
+
+        // Smoothly update street route polylines in-place as driver moves or recalculates without clearing markers
+        LaunchedEffect(googleMapRef, routePolylinePoints, pickupLatLng, destinationLatLng) {
+            if (googleMapRef == null || destinationLatLng == null) return@LaunchedEffect
+            val updated = if (routePolylinePoints.size >= 2) {
+                routePolylinePoints
+            } else {
+                buildCurvedRoutePoints(pickupLatLng, destinationLatLng, steps = 44)
+            }
+            activeCurvedRoute = updated
+            routeGlowPolyline?.points = updated
+            routeCorePolyline?.points = updated
         }
 
         // Frame-synced smooth Uber/DiDi telemetry tweening, radar sonar & route shimmer (~30fps JNI updates)
@@ -910,17 +993,19 @@ fun ViaKaabInteractiveMap(
                 modifier = Modifier.fillMaxSize()
             )
 
-            UberRouteStatusPill(
-                onlineCount = effectiveUnits.size,
-                isSearchingDrivers = isSearchingDrivers,
-                hasAssignedDriver = effectiveUnits.any { it.isPrimary } && destinationLatLng != null && etaMinutes != null,
-                etaMinutes = etaMinutes,
-                driverLabel = driverLabel,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .statusBarsPadding()
-                    .padding(top = badgeTopPaddingDp, start = 16.dp)
-            )
+            if (showTopStatusPill) {
+                UberRouteStatusPill(
+                    onlineCount = effectiveUnits.size,
+                    isSearchingDrivers = isSearchingDrivers,
+                    hasAssignedDriver = effectiveUnits.any { it.isPrimary } && destinationLatLng != null && etaMinutes != null,
+                    etaMinutes = etaMinutes,
+                    driverLabel = driverLabel,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(top = badgeTopPaddingDp, start = 16.dp)
+                )
+            }
         }
     } else {
         InteractiveCarrilloMapCanvas(
@@ -929,14 +1014,18 @@ fun ViaKaabInteractiveMap(
             destinationLatLng = destinationLatLng,
             destinationTitle = destinationTitle,
             routeColor = routeColor,
+            routePolylinePoints = routePolylinePoints,
             landmarks = landmarks,
             effectiveUnits = effectiveUnits,
             unitTweens = unitTweens,
             driverLabel = driverLabel,
             isSearchingDrivers = isSearchingDrivers,
             etaMinutes = etaMinutes,
+            topOverlayReserveDp = topOverlayReserveDp,
             bottomOverlayReserveDp = bottomOverlayReserveDp,
             badgeTopPaddingDp = badgeTopPaddingDp,
+            showTopStatusPill = showTopStatusPill,
+            recenterTrigger = recenterTrigger,
             onMapTap = onMapTap,
             modifier = modifier
         )
@@ -1007,6 +1096,129 @@ private fun UberRouteStatusPill(
     }
 }
 
+private data class CachedMapTile(
+    val bitmap: ImageBitmap,
+    val isLightOsm: Boolean
+)
+
+private object MapTileRepository {
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(6, TimeUnit.SECONDS)
+        .build()
+
+    private val memoryCache = LruCache<String, CachedMapTile>(96)
+    private val inFlightKeys = ConcurrentHashMap.newKeySet<String>()
+    private val recentFailureAtMs = ConcurrentHashMap<String, Long>()
+
+    // Dark-mode inversion color matrix for fallback standard OpenStreetMap tiles
+    val osmDarkColorFilter: ColorFilter = ColorFilter.colorMatrix(
+        ColorMatrix(
+            floatArrayOf(
+                -0.82f, 0f, 0f, 0f, 222f,
+                0f, -0.82f, 0f, 0f, 228f,
+                0f, 0f, -0.76f, 0f, 238f,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+    )
+
+    fun getCached(key: String): CachedMapTile? = memoryCache.get(key)
+
+    suspend fun fetchTile(context: Context, zoom: Int, x: Int, y: Int): Boolean {
+        val key = "${zoom}_${x}_${y}"
+        if (memoryCache.get(key) != null) return false
+        val lastFail = recentFailureAtMs[key] ?: 0L
+        if (System.currentTimeMillis() - lastFail < 15_000L) return false
+        if (!inFlightKeys.add(key)) return false
+
+        return try {
+            withContext(Dispatchers.IO) {
+                val diskDir = File(context.cacheDir, "viakaab_tiles_v1")
+                if (!diskDir.exists()) diskDir.mkdirs()
+                val cartoFile = File(diskDir, "${key}_carto.png")
+                val osmFile = File(diskDir, "${key}_osm.png")
+
+                if (cartoFile.exists() && cartoFile.length() > 120L) {
+                    BitmapFactory.decodeFile(cartoFile.absolutePath)?.let { bmp ->
+                        memoryCache.put(key, CachedMapTile(bmp.asImageBitmap(), isLightOsm = false))
+                        return@withContext true
+                    }
+                }
+                if (osmFile.exists() && osmFile.length() > 120L) {
+                    BitmapFactory.decodeFile(osmFile.absolutePath)?.let { bmp ->
+                        memoryCache.put(key, CachedMapTile(bmp.asImageBitmap(), isLightOsm = true))
+                        return@withContext true
+                    }
+                }
+
+                val subdomain = listOf("a", "b", "c", "d")[((x + y) and 3)]
+                val cartoUrl = "https://$subdomain.basemaps.cartocdn.com/dark_all/$zoom/$x/$y@2x.png"
+                val cartoBytes = downloadBytes(cartoUrl)
+                if (cartoBytes != null) {
+                    val bmp = BitmapFactory.decodeByteArray(cartoBytes, 0, cartoBytes.size)
+                    if (bmp != null) {
+                        runCatching { cartoFile.writeBytes(cartoBytes) }
+                        memoryCache.put(key, CachedMapTile(bmp.asImageBitmap(), isLightOsm = false))
+                        return@withContext true
+                    }
+                }
+
+                val osmUrl = "https://tile.openstreetmap.org/$zoom/$x/$y.png"
+                val osmBytes = downloadBytes(osmUrl)
+                if (osmBytes != null) {
+                    val bmp = BitmapFactory.decodeByteArray(osmBytes, 0, osmBytes.size)
+                    if (bmp != null) {
+                        runCatching { osmFile.writeBytes(osmBytes) }
+                        memoryCache.put(key, CachedMapTile(bmp.asImageBitmap(), isLightOsm = true))
+                        return@withContext true
+                    }
+                }
+
+                recentFailureAtMs[key] = System.currentTimeMillis()
+                false
+            }
+        } finally {
+            inFlightKeys.remove(key)
+        }
+    }
+
+    private fun downloadBytes(url: String): ByteArray? {
+        return runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "ViaKaabAndroid/1.0 (Felipe Carrillo Puerto)")
+                .build()
+            httpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    response.body?.bytes()?.takeIf { it.size > 120 }
+                } else {
+                    null
+                }
+            }
+        }.getOrNull()
+    }
+}
+
+private fun lngToWorldTileX(lng: Double, zoom: Double): Double {
+    val n = 2.0.pow(zoom)
+    return ((lng + 180.0) / 360.0) * n
+}
+
+private fun latToWorldTileY(lat: Double, zoom: Double): Double {
+    val clampedLat = lat.coerceIn(-85.05112878, 85.05112878)
+    val latRad = Math.toRadians(clampedLat)
+    val n = 2.0.pow(zoom)
+    return (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n
+}
+
+private fun worldTileToLatLng(tileX: Double, tileY: Double, zoom: Double): LatLng {
+    val n = 2.0.pow(zoom)
+    val lng = tileX / n * 360.0 - 180.0
+    val latRad = atan(sinh(PI * (1.0 - 2.0 * tileY / n)))
+    return LatLng(Math.toDegrees(latRad), lng)
+}
+
 @Composable
 private fun InteractiveCarrilloMapCanvas(
     pickupLatLng: LatLng,
@@ -1014,17 +1226,22 @@ private fun InteractiveCarrilloMapCanvas(
     destinationLatLng: LatLng?,
     destinationTitle: String,
     routeColor: Color,
+    routePolylinePoints: List<LatLng> = emptyList(),
     landmarks: List<CarrilloLandmark>,
     effectiveUnits: List<OnlineMapUnit>,
     unitTweens: Map<String, UnitTelemetryTween>,
     driverLabel: String,
     isSearchingDrivers: Boolean,
     etaMinutes: Int?,
+    topOverlayReserveDp: Dp,
     bottomOverlayReserveDp: Dp,
     badgeTopPaddingDp: Dp,
+    showTopStatusPill: Boolean,
+    recenterTrigger: Int,
     onMapTap: ((LatLng) -> Unit)?,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val density = LocalDensity.current
     var elapsedSeconds by remember { mutableFloatStateOf(0f) }
     var nowWallNanos by remember { mutableStateOf(System.nanoTime()) }
@@ -1043,12 +1260,21 @@ private fun InteractiveCarrilloMapCanvas(
     val sonarWave2 = ((elapsedSeconds / if (isSearchingDrivers) 1.55f else 2.2f) + 0.5f) % 1f
     val routeShimmerT = (elapsedSeconds / 2.2f) % 1.25f
 
-    val localLatSpan = 0.011
-    val localLngSpan = 0.011
-    var rawMinLat = min(pickupLatLng.latitude - localLatSpan, destinationLatLng?.latitude ?: pickupLatLng.latitude)
-    var rawMaxLat = max(pickupLatLng.latitude + localLatSpan, destinationLatLng?.latitude ?: pickupLatLng.latitude)
-    var rawMinLng = min(pickupLatLng.longitude - localLngSpan, destinationLatLng?.longitude ?: pickupLatLng.longitude)
-    var rawMaxLng = max(pickupLatLng.longitude + localLngSpan, destinationLatLng?.longitude ?: pickupLatLng.longitude)
+    // Interactive pan/zoom deltas that auto-reset on recenter or route change
+    var panLatDelta by remember { mutableDoubleStateOf(0.0) }
+    var panLngDelta by remember { mutableDoubleStateOf(0.0) }
+    var zoomDelta by remember { mutableDoubleStateOf(0.0) }
+    LaunchedEffect(pickupLatLng, destinationLatLng, recenterTrigger) {
+        panLatDelta = 0.0
+        panLngDelta = 0.0
+        zoomDelta = 0.0
+    }
+
+    // Compute geographic framing bounds from active route & units
+    var rawMinLat = min(pickupLatLng.latitude, destinationLatLng?.latitude ?: pickupLatLng.latitude)
+    var rawMaxLat = max(pickupLatLng.latitude, destinationLatLng?.latitude ?: pickupLatLng.latitude)
+    var rawMinLng = min(pickupLatLng.longitude, destinationLatLng?.longitude ?: pickupLatLng.longitude)
+    var rawMaxLng = max(pickupLatLng.longitude, destinationLatLng?.longitude ?: pickupLatLng.longitude)
 
     effectiveUnits.forEach { unit ->
         rawMinLat = min(rawMinLat, unit.lat)
@@ -1057,12 +1283,11 @@ private fun InteractiveCarrilloMapCanvas(
         rawMaxLng = max(rawMaxLng, unit.lng)
     }
 
-    val latPadding = max((rawMaxLat - rawMinLat) * 0.18, 0.0035)
-    val lngPadding = max((rawMaxLng - rawMinLng) * 0.18, 0.0035)
-    val minLat = rawMinLat - latPadding
-    val maxLat = rawMaxLat + latPadding
-    val minLng = rawMinLng - lngPadding
-    val maxLng = rawMaxLng + lngPadding
+    val baseCenterLat = (rawMinLat + rawMaxLat) * 0.5 + panLatDelta
+    val baseCenterLng = (rawMinLng + rawMaxLng) * 0.5 + panLngDelta
+
+    val labelSizes = remember { mutableStateMapOf<String, IntSize>() }
+    var tileRevision by remember { mutableIntStateOf(0) }
 
     BoxWithConstraints(
         modifier = modifier
@@ -1071,199 +1296,316 @@ private fun InteractiveCarrilloMapCanvas(
     ) {
         val totalWidthPx = with(density) { maxWidth.toPx() }
         val totalHeightPx = with(density) { maxHeight.toPx() }
-        val topReservePx = with(density) { 86.dp.toPx() }
+        val topReservePx = with(density) { topOverlayReserveDp.toPx() }
         val bottomReservePx = with(density) { bottomOverlayReserveDp.toPx() }
-        val mapAreaHeightPx = (totalHeightPx - topReservePx - bottomReservePx).coerceAtLeast(200f)
+        val mapAreaHeightPx = (totalHeightPx - topReservePx - bottomReservePx).coerceAtLeast(180f)
+        val tileBaseSizePx = with(density) { 256.dp.toPx() }
+
+        // Select optimal Web Mercator zoom so pickup + destination + active units fit comfortably
+        val fitZoom = remember(
+            rawMinLat,
+            rawMaxLat,
+            rawMinLng,
+            rawMaxLng,
+            destinationLatLng,
+            totalWidthPx,
+            mapAreaHeightPx,
+            tileBaseSizePx
+        ) {
+            if (destinationLatLng == null && effectiveUnits.isEmpty()) {
+                15.6
+            } else {
+                var chosen = 12.5
+                var candidate = 16.0
+                while (candidate >= 12.0) {
+                    val spanX = (lngToWorldTileX(rawMaxLng, candidate) - lngToWorldTileX(rawMinLng, candidate)) * tileBaseSizePx
+                    val spanY = (latToWorldTileY(rawMinLat, candidate) - latToWorldTileY(rawMaxLat, candidate)) * tileBaseSizePx
+                    if (spanX <= totalWidthPx * 0.66 && spanY <= mapAreaHeightPx * 0.62) {
+                        chosen = candidate
+                        break
+                    }
+                    candidate -= 0.25
+                }
+                chosen.coerceIn(12.2, 16.0)
+            }
+        }
+
+        val activeZoom = (fitZoom + zoomDelta).coerceIn(11.5, 17.5)
+        val tileZoom = activeZoom.roundToInt().coerceIn(11, 17)
+        val tileDisplayPx = (tileBaseSizePx * 2.0.pow(activeZoom - tileZoom)).toFloat()
+        val maxTileIndex = (1 shl tileZoom) - 1
+
+        val viewportCenterX = totalWidthPx * 0.5f
+        val viewportCenterY = topReservePx + mapAreaHeightPx * 0.5f
+
+        val centerTileX = lngToWorldTileX(baseCenterLng, tileZoom.toDouble())
+        val centerTileY = latToWorldTileY(baseCenterLat, tileZoom.toDouble())
 
         fun toOffset(latLng: LatLng): Offset {
-            val nx = ((latLng.longitude - minLng) / (maxLng - minLng)).toFloat().coerceIn(0.05f, 0.95f)
-            val ny = ((maxLat - latLng.latitude) / (maxLat - minLat)).toFloat().coerceIn(0.05f, 0.95f)
+            val tx = lngToWorldTileX(latLng.longitude, tileZoom.toDouble())
+            val ty = latToWorldTileY(latLng.latitude, tileZoom.toDouble())
             return Offset(
-                x = nx * totalWidthPx,
-                y = topReservePx + ny * mapAreaHeightPx
+                x = viewportCenterX + ((tx - centerTileX) * tileDisplayPx).toFloat(),
+                y = viewportCenterY + ((ty - centerTileY) * tileDisplayPx).toFloat()
             )
         }
 
         fun toLatLng(offset: Offset): LatLng {
-            val nx = (offset.x / totalWidthPx).coerceIn(0.04f, 0.96f)
-            val ny = ((offset.y - topReservePx) / mapAreaHeightPx).coerceIn(0.04f, 0.96f)
-            val lng = minLng + nx * (maxLng - minLng)
-            val lat = maxLat - ny * (maxLat - minLat)
-            return LatLng(lat, lng)
+            val tx = centerTileX + (offset.x - viewportCenterX) / tileDisplayPx
+            val ty = centerTileY + (offset.y - viewportCenterY) / tileDisplayPx
+            return worldTileToLatLng(tx, ty, tileZoom.toDouble())
         }
 
-        val tapModifier = if (onMapTap != null) {
-            Modifier.pointerInput(minLat, maxLat, minLng, maxLng, totalWidthPx, mapAreaHeightPx) {
-                detectTapGestures { tapOffset ->
-                    val tappedLandmark = landmarks.firstOrNull { landmark ->
-                        val landmarkOffset = toOffset(landmark.latLng)
-                        (landmarkOffset - tapOffset).getDistance() <= 46f
+        val minTileX = floor(centerTileX - viewportCenterX / tileDisplayPx).toInt().coerceIn(0, maxTileIndex)
+        val maxTileX = floor(centerTileX + (totalWidthPx - viewportCenterX) / tileDisplayPx).toInt().coerceIn(0, maxTileIndex)
+        val minTileY = floor(centerTileY - viewportCenterY / tileDisplayPx).toInt().coerceIn(0, maxTileIndex)
+        val maxTileY = floor(centerTileY + (totalHeightPx - viewportCenterY) / tileDisplayPx).toInt().coerceIn(0, maxTileIndex)
+
+        // Pre-fetch visible CARTO Dark / OSM tiles in parallel without blocking rendering
+        LaunchedEffect(tileZoom, minTileX, maxTileX, minTileY, maxTileY) {
+            var anyLoaded = false
+            for (tx in minTileX..maxTileX) {
+                for (ty in minTileY..maxTileY) {
+                    if (MapTileRepository.fetchTile(context, tileZoom, tx, ty)) {
+                        anyLoaded = true
+                        tileRevision++
                     }
-                    onMapTap(tappedLandmark?.latLng ?: toLatLng(tapOffset))
                 }
             }
-        } else {
-            Modifier
+            if (anyLoaded) {
+                tileRevision++
+            }
         }
+
+        val gestureModifier = Modifier
+            .pointerInput(tileZoom, tileDisplayPx, baseCenterLat, baseCenterLng) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    if (zoom != 1f) {
+                        val deltaZ = ln(zoom.toDouble()) / ln(2.0)
+                        zoomDelta = (zoomDelta + deltaZ).coerceIn(-3.5, 2.5)
+                    }
+                    if (pan != Offset.Zero) {
+                        val before = worldTileToLatLng(centerTileX, centerTileY, tileZoom.toDouble())
+                        val after = worldTileToLatLng(
+                            centerTileX - pan.x / tileDisplayPx,
+                            centerTileY - pan.y / tileDisplayPx,
+                            tileZoom.toDouble()
+                        )
+                        panLatDelta = (panLatDelta + (after.latitude - before.latitude)).coerceIn(-0.18, 0.18)
+                        panLngDelta = (panLngDelta + (after.longitude - before.longitude)).coerceIn(-0.18, 0.18)
+                    }
+                }
+            }
+            .let { base ->
+                if (onMapTap != null) {
+                    base.pointerInput(tileZoom, tileDisplayPx, baseCenterLat, baseCenterLng) {
+                        detectTapGestures { tapOffset ->
+                            val tappedLandmark = landmarks.firstOrNull { landmark ->
+                                val landmarkOffset = toOffset(landmark.latLng)
+                                (landmarkOffset - tapOffset).getDistance() <= 52f
+                            }
+                            onMapTap(tappedLandmark?.latLng ?: toLatLng(tapOffset))
+                        }
+                    }
+                } else {
+                    base
+                }
+            }
+
+        // Trigger redraw when cached tiles update
+        val revisionSnapshot = tileRevision
 
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .then(tapModifier)
+                .then(gestureModifier)
         ) {
-            val gridCols = 8
-            val gridRows = 12
-            val colStep = size.width / gridCols
-            val rowStep = size.height / gridRows
+            @Suppress("UNUSED_EXPRESSION")
+            revisionSnapshot
 
-            for (col in 0 until gridCols) {
-                for (row in 0 until gridRows) {
-                    val isPark = (col == 3 && row == 4) || (col == 5 && row == 6)
-                    drawRoundRect(
-                        color = if (isPark) {
-                            Color(0xFF0D2824).copy(alpha = 0.72f)
-                        } else if ((col + row) % 2 == 0) {
-                            Slate900.copy(alpha = 0.62f)
-                        } else {
-                            Slate900.copy(alpha = 0.34f)
-                        },
-                        topLeft = Offset(col * colStep + 5f, row * rowStep + 5f),
-                        size = Size(colStep - 10f, rowStep - 10f),
-                        cornerRadius = CornerRadius(10f, 10f)
-                    )
+            // Subtle dark obsidian base canvas
+            drawRect(color = Color(0xFF0A1220))
+
+            // Draw real Web Mercator street map tiles (CARTO Dark Matter or dark-filtered OSM)
+            var drewAtLeastOneTile = false
+            for (tx in minTileX..maxTileX) {
+                for (ty in minTileY..maxTileY) {
+                    val key = "${tileZoom}_${tx}_${ty}"
+                    val cached = MapTileRepository.getCached(key)
+                    val dstLeft = (viewportCenterX + (tx - centerTileX) * tileDisplayPx).roundToInt()
+                    val dstTop = (viewportCenterY + (ty - centerTileY) * tileDisplayPx).roundToInt()
+                    val dstRight = (viewportCenterX + (tx + 1 - centerTileX) * tileDisplayPx).roundToInt()
+                    val dstBottom = (viewportCenterY + (ty + 1 - centerTileY) * tileDisplayPx).roundToInt()
+                    val dstW = (dstRight - dstLeft + 1).coerceAtLeast(1)
+                    val dstH = (dstBottom - dstTop + 1).coerceAtLeast(1)
+
+                    if (cached != null) {
+                        drewAtLeastOneTile = true
+                        drawImage(
+                            image = cached.bitmap,
+                            dstOffset = IntOffset(dstLeft, dstTop),
+                            dstSize = IntSize(dstW, dstH),
+                            colorFilter = if (cached.isLightOsm) MapTileRepository.osmDarkColorFilter else null
+                        )
+                    } else {
+                        drawRect(
+                            color = Slate900.copy(alpha = 0.55f),
+                            topLeft = Offset(dstLeft.toFloat(), dstTop.toFloat()),
+                            size = Size(dstW.toFloat(), dstH.toFloat())
+                        )
+                    }
                 }
             }
 
-            for (i in 1 until gridCols) {
-                val x = i * colStep
-                drawLine(
-                    color = if (i % 3 == 0) Slate700.copy(alpha = 0.9f) else Slate800.copy(alpha = 0.85f),
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = if (i % 3 == 0) 6.5f else 2.2f
-                )
+            if (!drewAtLeastOneTile) {
+                // Clean subtle placeholder grid only while initial tiles stream in
+                val step = 72f
+                var gx = 0f
+                while (gx < size.width) {
+                    drawLine(Slate800.copy(alpha = 0.5f), Offset(gx, 0f), Offset(gx, size.height), strokeWidth = 1.2f)
+                    gx += step
+                }
+                var gy = 0f
+                while (gy < size.height) {
+                    drawLine(Slate800.copy(alpha = 0.5f), Offset(0f, gy), Offset(size.width, gy), strokeWidth = 1.2f)
+                    gy += step
+                }
             }
-            for (j in 1 until gridRows) {
-                val y = j * rowStep
-                drawLine(
-                    color = if (j % 3 == 0) Slate700.copy(alpha = 0.9f) else Slate800.copy(alpha = 0.85f),
-                    start = Offset(0f, y),
-                    end = Offset(size.width, y),
-                    strokeWidth = if (j % 3 == 0) 6.5f else 2.2f
-                )
-            }
-
-            drawLine(
-                color = Slate700,
-                start = Offset(size.width * 0.08f, size.height * 0.80f),
-                end = Offset(size.width * 0.92f, size.height * 0.12f),
-                strokeWidth = 14f,
-                cap = StrokeCap.Round
-            )
-            drawLine(
-                color = Slate600.copy(alpha = 0.55f),
-                start = Offset(0f, size.height * 0.45f),
-                end = Offset(size.width, size.height * 0.49f),
-                strokeWidth = 9f,
-                cap = StrokeCap.Round
-            )
 
             val originPos = toOffset(pickupLatLng)
 
-            // Curved Uber/DiDi route with outer neon glow + sweeping animated light pulse
+            // Street-by-street or curved fallback route with outer glow + sweeping animated light pulse
             if (destinationLatLng != null) {
                 val destPos = toOffset(destinationLatLng)
-                val controlPos = buildCanvasRouteControl(originPos, destPos)
-
-                val routePath = Path().apply {
-                    moveTo(originPos.x, originPos.y)
-                    quadraticTo(controlPos.x, controlPos.y, destPos.x, destPos.y)
-                }
-                drawPath(
-                    path = routePath,
-                    color = routeColor.copy(alpha = 0.25f),
-                    style = Stroke(width = 20f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                )
-                drawPath(
-                    path = routePath,
-                    color = routeColor,
-                    style = Stroke(width = 7.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                )
-
-                val pulseStart = (routeShimmerT - 0.22f).coerceIn(0f, 1f)
-                val pulseEnd = routeShimmerT.coerceIn(0f, 1f)
-                if (pulseEnd > pulseStart + 0.01f) {
-                    val shimmerPath = Path()
-                    val steps = 16
-                    for (s in 0..steps) {
-                        val t = pulseStart + (pulseEnd - pulseStart) * (s / steps.toFloat())
-                        val pt = quadraticOffset(originPos, controlPos, destPos, t)
-                        if (s == 0) shimmerPath.moveTo(pt.x, pt.y) else shimmerPath.lineTo(pt.x, pt.y)
+                if (routePolylinePoints.size >= 2) {
+                    val streetOffsets = routePolylinePoints.map { toOffset(it) }
+                    val streetPath = Path().apply {
+                        moveTo(streetOffsets.first().x, streetOffsets.first().y)
+                        for (i in 1 until streetOffsets.size) {
+                            lineTo(streetOffsets[i].x, streetOffsets[i].y)
+                        }
                     }
                     drawPath(
-                        path = shimmerPath,
-                        color = BrandSkyTint.copy(alpha = 0.92f),
-                        style = Stroke(width = 8.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        path = streetPath,
+                        color = routeColor.copy(alpha = 0.28f),
+                        style = Stroke(width = 20f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
+                    drawPath(
+                        path = streetPath,
+                        color = routeColor,
+                        style = Stroke(width = 7.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+
+                    val pulseStart = (routeShimmerT - 0.22f).coerceIn(0f, 1f)
+                    val pulseEnd = routeShimmerT.coerceIn(0f, 1f)
+                    val startIdx = (pulseStart * streetOffsets.lastIndex).toInt().coerceIn(0, streetOffsets.lastIndex)
+                    val endIdx = (pulseEnd * streetOffsets.lastIndex).toInt().coerceIn(0, streetOffsets.lastIndex)
+                    if (endIdx > startIdx) {
+                        val shimmerPath = Path().apply {
+                            moveTo(streetOffsets[startIdx].x, streetOffsets[startIdx].y)
+                            for (i in (startIdx + 1)..endIdx) {
+                                lineTo(streetOffsets[i].x, streetOffsets[i].y)
+                            }
+                        }
+                        drawPath(
+                            path = shimmerPath,
+                            color = BrandSkyTint.copy(alpha = 0.92f),
+                            style = Stroke(width = 8.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                    }
+                } else {
+                    val controlPos = buildCanvasRouteControl(originPos, destPos)
+
+                    val routePath = Path().apply {
+                        moveTo(originPos.x, originPos.y)
+                        quadraticTo(controlPos.x, controlPos.y, destPos.x, destPos.y)
+                    }
+                    drawPath(
+                        path = routePath,
+                        color = routeColor.copy(alpha = 0.28f),
+                        style = Stroke(width = 20f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                    drawPath(
+                        path = routePath,
+                        color = routeColor,
+                        style = Stroke(width = 7.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+
+                    val pulseStart = (routeShimmerT - 0.22f).coerceIn(0f, 1f)
+                    val pulseEnd = routeShimmerT.coerceIn(0f, 1f)
+                    if (pulseEnd > pulseStart + 0.01f) {
+                        val shimmerPath = Path()
+                        val steps = 16
+                        for (s in 0..steps) {
+                            val t = pulseStart + (pulseEnd - pulseStart) * (s / steps.toFloat())
+                            val pt = quadraticOffset(originPos, controlPos, destPos, t)
+                            if (s == 0) shimmerPath.moveTo(pt.x, pt.y) else shimmerPath.lineTo(pt.x, pt.y)
+                        }
+                        drawPath(
+                            path = shimmerPath,
+                            color = BrandSkyTint.copy(alpha = 0.92f),
+                            style = Stroke(width = 8.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                    }
                 }
 
                 // Destination Square Pin
                 drawCircle(
                     color = BrandRed.copy(alpha = 0.28f),
-                    radius = 22f,
+                    radius = 20f,
                     center = destPos
                 )
                 drawLine(
                     color = PureBlack,
                     start = destPos,
-                    end = Offset(destPos.x, destPos.y - 34f),
-                    strokeWidth = 6f,
+                    end = Offset(destPos.x, destPos.y - 30f),
+                    strokeWidth = 5.5f,
                     cap = StrokeCap.Round
                 )
                 drawRoundRect(
                     color = PureBlack,
-                    topLeft = Offset(destPos.x - 19f, destPos.y - 68f),
-                    size = Size(38f, 38f),
-                    cornerRadius = CornerRadius(9f, 9f)
+                    topLeft = Offset(destPos.x - 17f, destPos.y - 60f),
+                    size = Size(34f, 34f),
+                    cornerRadius = CornerRadius(8f, 8f)
                 )
                 drawRoundRect(
                     color = BrandSkyTint,
-                    topLeft = Offset(destPos.x - 19f, destPos.y - 68f),
-                    size = Size(38f, 38f),
-                    cornerRadius = CornerRadius(9f, 9f),
-                    style = Stroke(width = 2.5f)
+                    topLeft = Offset(destPos.x - 17f, destPos.y - 60f),
+                    size = Size(34f, 34f),
+                    cornerRadius = CornerRadius(8f, 8f),
+                    style = Stroke(width = 2.2f)
                 )
                 drawRect(
                     color = PureWhite,
-                    topLeft = Offset(destPos.x - 7f, destPos.y - 56f),
-                    size = Size(14f, 14f)
+                    topLeft = Offset(destPos.x - 6f, destPos.y - 49f),
+                    size = Size(12f, 12f)
                 )
             }
 
             // Dual Uber/DiDi Radar Sonar Waves around Pickup Puck
-            val maxSonarPx = if (isSearchingDrivers) 135f else 78f
+            val maxSonarPx = if (isSearchingDrivers) 130f else 72f
             drawCircle(
                 color = BrandEmerald.copy(alpha = (1f - sonarWave1) * 0.22f),
-                radius = 20f + sonarWave1 * maxSonarPx,
+                radius = 18f + sonarWave1 * maxSonarPx,
                 center = originPos
             )
             drawCircle(
                 color = BrandEmerald.copy(alpha = (1f - sonarWave1) * 0.55f),
-                radius = 20f + sonarWave1 * maxSonarPx,
+                radius = 18f + sonarWave1 * maxSonarPx,
                 center = originPos,
                 style = Stroke(width = 2.5f)
             )
             drawCircle(
                 color = BrandSkyTint.copy(alpha = (1f - sonarWave2) * 0.42f),
-                radius = 20f + sonarWave2 * maxSonarPx,
+                radius = 18f + sonarWave2 * maxSonarPx,
                 center = originPos,
                 style = Stroke(width = 2f)
             )
 
             // Live GPS Pickup Puck
-            drawCircle(color = PureBlack, radius = 19f, center = originPos)
-            drawCircle(color = PureWhite, radius = 15f, center = originPos)
-            drawCircle(color = BrandEmerald, radius = 8.5f, center = originPos)
+            drawCircle(color = PureBlack, radius = 17f, center = originPos)
+            drawCircle(color = PureWhite, radius = 13.5f, center = originPos)
+            drawCircle(color = BrandEmerald, radius = 7.5f, center = originPos)
 
             // Render ONLY REAL online drivers / delivery riders with smooth telemetry interpolation
             effectiveUnits.forEach { unit ->
@@ -1275,7 +1617,7 @@ private fun InteractiveCarrilloMapCanvas(
                 if (unit.isPrimary) {
                     drawCircle(
                         color = BrandEmerald.copy(alpha = 0.24f + 0.12f * (1f - sonarWave1)),
-                        radius = 36f + 8f * sonarWave1,
+                        radius = 34f + 8f * sonarWave1,
                         center = unitPos
                     )
                 }
@@ -1294,62 +1636,116 @@ private fun InteractiveCarrilloMapCanvas(
             }
         }
 
-        // Clickable Landmark chips
+        val edgeMarginPx = with(density) { 12.dp.toPx() }
+        val minSafeYPx = topReservePx + with(density) { 6.dp.toPx() }
+        val maxSafeBottomPx = (totalHeightPx - bottomReservePx - with(density) { 6.dp.toPx() }).coerceAtLeast(minSafeYPx + 40f)
+
+        fun clampLabelOffset(
+            desiredX: Float,
+            desiredY: Float,
+            sizeKey: String,
+            fallbackWidthDp: Dp = 148.dp,
+            fallbackHeightDp: Dp = 28.dp
+        ): IntOffset {
+            val measured = labelSizes[sizeKey]
+            val w = if (measured != null && measured.width > 0) measured.width.toFloat() else with(density) { fallbackWidthDp.toPx() }
+            val h = if (measured != null && measured.height > 0) measured.height.toFloat() else with(density) { fallbackHeightDp.toPx() }
+            val maxX = (totalWidthPx - w - edgeMarginPx).coerceAtLeast(edgeMarginPx)
+            val maxY = (maxSafeBottomPx - h).coerceAtLeast(minSafeYPx)
+            return IntOffset(
+                x = desiredX.coerceIn(edgeMarginPx, maxX).roundToInt(),
+                y = desiredY.coerceIn(minSafeYPx, maxY).roundToInt()
+            )
+        }
+
+        val originPos = toOffset(pickupLatLng)
+        val destPos = destinationLatLng?.let { toOffset(it) }
+        val unitOffsets = effectiveUnits.map { unit ->
+            val tween = unitTweens[unit.id]
+            val (posLatLng, _) = tween?.sample(nowWallNanos) ?: (LatLng(unit.lat, unit.lng) to unit.headingDegrees)
+            unit to toOffset(posLatLng)
+        }
+
+        // Filter landmarks to avoid piling onto pickup, destination, active units, or other landmarks
+        val landmarkClearancePx = with(density) { 78.dp.toPx() }
+        val siblingClearancePx = with(density) { 58.dp.toPx() }
+        val visibleLandmarks = mutableListOf<Pair<CarrilloLandmark, Offset>>()
         landmarks.forEach { landmark ->
-            val inBounds = landmark.latLng.latitude in minLat..maxLat &&
-                landmark.latLng.longitude in minLng..maxLng
-            if (inBounds) {
-                val pos = toOffset(landmark.latLng)
-                Row(
-                    modifier = Modifier
-                        .offset {
-                            IntOffset(
-                                x = (pos.x - 28f).roundToInt(),
-                                y = (pos.y - 16f).roundToInt()
-                            )
-                        }
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Slate800.copy(alpha = 0.88f))
-                        .then(
-                            if (onMapTap != null) {
-                                Modifier.clickable { onMapTap(landmark.latLng) }
-                            } else {
-                                Modifier
-                            }
-                        )
-                        .padding(horizontal = 7.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(BrandBlue)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = landmark.label,
-                        color = Slate300,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+            val pos = toOffset(landmark.latLng)
+            val insideSafeViewport = pos.x in edgeMarginPx..(totalWidthPx - edgeMarginPx) &&
+                pos.y in minSafeYPx..maxSafeBottomPx
+            val clearOfOrigin = (pos - originPos).getDistance() > landmarkClearancePx
+            val clearOfDest = destPos == null || (pos - destPos).getDistance() > landmarkClearancePx
+            val clearOfUnits = unitOffsets.all { (_, uPos) -> (pos - uPos).getDistance() > landmarkClearancePx }
+            val clearOfSiblings = visibleLandmarks.all { (_, sPos) -> (pos - sPos).getDistance() > siblingClearancePx }
+            if (insideSafeViewport && clearOfOrigin && clearOfDest && clearOfUnits && clearOfSiblings) {
+                visibleLandmarks.add(landmark to pos)
             }
         }
 
-        // Pickup Label
-        val originPos = toOffset(pickupLatLng)
+        // Clickable Landmark chips (collision-filtered and clamped within viewport)
+        visibleLandmarks.forEach { (landmark, pos) ->
+            val key = "landmark_${landmark.label}"
+            val clamped = clampLabelOffset(
+                desiredX = pos.x - 36f,
+                desiredY = pos.y - 14f,
+                sizeKey = key,
+                fallbackWidthDp = 96.dp,
+                fallbackHeightDp = 24.dp
+            )
+            Row(
+                modifier = Modifier
+                    .onSizeChanged { labelSizes[key] = it }
+                    .offset { clamped }
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Slate900.copy(alpha = 0.86f))
+                    .border(0.8.dp, Slate700.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+                    .then(
+                        if (onMapTap != null) {
+                            Modifier.clickable { onMapTap(landmark.latLng) }
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(BrandBlue)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = landmark.label,
+                    color = Slate300,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
+                )
+            }
+        }
+
+        // Pickup Label (clamped cleanly inside screen bounds and separated from destination)
+        val placePickupBelow = destPos == null || originPos.y >= destPos.y
+        val pickupSize = labelSizes["pickup_label"]
+        val pickupHalfW = (pickupSize?.width ?: 220) / 2f
+        val pickupDesiredY = if (placePickupBelow) originPos.y + 22f else originPos.y - 58f
         Row(
             modifier = Modifier
+                .onSizeChanged { labelSizes["pickup_label"] = it }
                 .offset {
-                    IntOffset(
-                        x = (originPos.x - 52f).roundToInt().coerceAtLeast(12),
-                        y = (originPos.y + 22f).roundToInt()
+                    clampLabelOffset(
+                        desiredX = originPos.x - pickupHalfW,
+                        desiredY = pickupDesiredY,
+                        sizeKey = "pickup_label"
                     )
                 }
+                .widthIn(max = 175.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(PureBlack.copy(alpha = 0.90f))
-                .border(1.dp, BrandEmerald.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                .border(1.dp, BrandEmerald.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1364,50 +1760,69 @@ private fun InteractiveCarrilloMapCanvas(
                 text = pickupTitle,
                 color = PureWhite,
                 fontSize = 11.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
 
-        // Destination Label
-        if (destinationLatLng != null) {
-            val destPos = toOffset(destinationLatLng)
+        // Destination Label (clamped cleanly inside screen bounds)
+        if (destPos != null) {
+            val destSize = labelSizes["dest_label"]
+            val destHalfW = (destSize?.width ?: 220) / 2f
+            val destDesiredY = if (originPos.y >= destPos.y) destPos.y - 96f else destPos.y + 18f
             Row(
                 modifier = Modifier
+                    .onSizeChanged { labelSizes["dest_label"] = it }
                     .offset {
-                        IntOffset(
-                            x = (destPos.x - 58f).roundToInt().coerceAtLeast(12),
-                            y = (destPos.y - 98f).roundToInt().coerceAtLeast(12)
+                        clampLabelOffset(
+                            desiredX = destPos.x - destHalfW,
+                            desiredY = destDesiredY,
+                            sizeKey = "dest_label"
                         )
                     }
+                    .widthIn(max = 175.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(PureBlack.copy(alpha = 0.92f))
-                    .border(1.dp, BrandSkyTint.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                    .border(1.dp, BrandRed.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Icon(
+                    imageVector = Icons.Default.Flag,
+                    contentDescription = null,
+                    tint = BrandRed,
+                    modifier = Modifier.size(12.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = destinationTitle.removePrefix("Destino: ").take(24),
+                    text = destinationTitle.removePrefix("Destino: ").removePrefix("Entrega/Destino: "),
                     color = BrandSkyTint,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
         // Floating labels ONLY for real online drivers / delivery riders
-        effectiveUnits.forEach { unit ->
-            val tween = unitTweens[unit.id]
-            val (posLatLng, _) = tween?.sample(nowWallNanos)
-                ?: (LatLng(unit.lat, unit.lng) to unit.headingDegrees)
-            val unitPos = toOffset(posLatLng)
+        unitOffsets.forEach { (unit, unitPos) ->
+            val key = "unit_${unit.id}"
+            val unitSize = labelSizes[key]
+            val unitHalfW = (unitSize?.width ?: 180) / 2f
             Row(
                 modifier = Modifier
+                    .onSizeChanged { labelSizes[key] = it }
                     .offset {
-                        IntOffset(
-                            x = (unitPos.x - 40f).roundToInt().coerceAtLeast(12),
-                            y = (unitPos.y - 54f).roundToInt().coerceAtLeast(12)
+                        clampLabelOffset(
+                            desiredX = unitPos.x - unitHalfW,
+                            desiredY = unitPos.y - 54f,
+                            sizeKey = key,
+                            fallbackWidthDp = 135.dp
                         )
                     }
+                    .widthIn(max = 160.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(PureBlack.copy(alpha = 0.92f))
                     .border(1.5.dp, BrandEmerald, RoundedCornerShape(14.dp))
@@ -1427,53 +1842,42 @@ private fun InteractiveCarrilloMapCanvas(
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = if (unit.isPrimary && etaMinutes != null && etaMinutes > 0 && destinationLatLng != null) {
-                        "${unit.label.take(14)} · ${etaMinutes}m"
+                        "${unit.label} · ${etaMinutes}m"
                     } else {
-                        unit.label.take(18)
+                        unit.label
                     },
                     color = PureWhite,
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
-        UberRouteStatusPill(
-            onlineCount = effectiveUnits.size,
-            isSearchingDrivers = isSearchingDrivers,
-            hasAssignedDriver = effectiveUnits.any { it.isPrimary } && destinationLatLng != null && etaMinutes != null,
-            etaMinutes = etaMinutes,
-            driverLabel = driverLabel,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                .padding(top = badgeTopPaddingDp, start = 16.dp)
-        )
-
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(top = badgeTopPaddingDp, end = 16.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Slate900.copy(alpha = 0.88f))
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Default.Map,
-                contentDescription = null,
-                tint = BrandBlue,
-                modifier = Modifier.size(14.dp)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = if (onMapTap != null) "Carrillo Puerto · En vivo" else "Ruta en tiempo real",
-                color = Slate400,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium
+        if (showTopStatusPill) {
+            UberRouteStatusPill(
+                onlineCount = effectiveUnits.size,
+                isSearchingDrivers = isSearchingDrivers,
+                hasAssignedDriver = effectiveUnits.any { it.isPrimary } && destinationLatLng != null && etaMinutes != null,
+                etaMinutes = etaMinutes,
+                driverLabel = driverLabel,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(top = badgeTopPaddingDp, start = 16.dp)
             )
         }
+
+        // Discreet map attribution cleanly above bottom overlay
+        Text(
+            text = "© OpenStreetMap · CARTO",
+            color = Slate400.copy(alpha = 0.72f),
+            fontSize = 9.sp,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 14.dp, bottom = bottomOverlayReserveDp + 6.dp)
+        )
     }
 }
 

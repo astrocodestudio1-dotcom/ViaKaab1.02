@@ -234,6 +234,8 @@ fun ViaKaabAppNavigation(
                 initialMode = initialMode,
                 initialAssistanceNote = route.assistanceNote,
                 initialDestinationQuery = route.initialDestinationQuery,
+                isInPipMode = isInPipMode,
+                onEnterFloatingPip = onEnterFloatingPip,
                 onBack = { navController.popBackStack() },
                 onOpenProfileMenu = { navController.navigate(ViaKaabRoute.Profile) }
             )

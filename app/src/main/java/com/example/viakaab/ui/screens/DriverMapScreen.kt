@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,20 +42,31 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Emergency
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LocalPharmacy
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.RoundaboutRight
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Straight
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.TurnLeft
+import androidx.compose.material.icons.filled.TurnRight
+import androidx.compose.material.icons.filled.TurnSlightLeft
+import androidx.compose.material.icons.filled.TurnSlightRight
 import androidx.compose.material.icons.filled.TwoWheeler
+import androidx.compose.material.icons.filled.UTurnLeft
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -215,15 +227,31 @@ fun DriverMapScreen(
     var showCounterDialog by rememberSaveable { mutableStateOf(false) }
     var showSosDialog by rememberSaveable { mutableStateOf(false) }
     var showQuickRoleDialog by rememberSaveable { mutableStateOf(false) }
+    var showPickupCodeDialog by rememberSaveable { mutableStateOf(false) }
+    var showDeliveryCodeDialog by rememberSaveable { mutableStateOf(false) }
+    var verificationCodeInput by rememberSaveable { mutableStateOf("") }
+    var verificationCodeError by rememberSaveable { mutableStateOf<String?>(null) }
+    var revealTestCodeHint by rememberSaveable { mutableStateOf(false) }
     var isFloatingMinimized by rememberSaveable { mutableStateOf(false) }
     var counterAmount by rememberSaveable { mutableStateOf("") }
     var floatBubbleOffsetX by remember { mutableFloatStateOf(0f) }
     var floatBubbleOffsetY by remember { mutableFloatStateOf(0f) }
     var floatCardOffsetY by remember { mutableFloatStateOf(0f) }
+    var recenterTrigger by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(showAcceptDialog, showCounterDialog, showQuickRoleDialog) {
+    LaunchedEffect(
+        showAcceptDialog,
+        showCounterDialog,
+        showQuickRoleDialog,
+        showPickupCodeDialog,
+        showDeliveryCodeDialog
+    ) {
         mapViewModel.setDriverAutoRefreshPaused(
-            showAcceptDialog || showCounterDialog || showQuickRoleDialog
+            showAcceptDialog ||
+                showCounterDialog ||
+                showQuickRoleDialog ||
+                showPickupCodeDialog ||
+                showDeliveryCodeDialog
         )
     }
 
@@ -507,15 +535,225 @@ fun DriverMapScreen(
         )
     }
 
+    if (showPickupCodeDialog) {
+        AlertDialog(
+            onDismissRequest = { showPickupCodeDialog = false },
+            containerColor = Slate900,
+            titleContentColor = PureWhite,
+            textContentColor = Slate300,
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = BrandBlue,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = { Text("Código de recolección en comercio", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Solicita el código de 4 dígitos al personal de ${req.origin} para confirmar que estás recogiendo el pedido correcto.",
+                        color = Slate300,
+                        fontSize = 13.sp
+                    )
+                    OutlinedTextField(
+                        value = verificationCodeInput,
+                        onValueChange = { input ->
+                            verificationCodeInput = input.filter { it.isDigit() }.take(4)
+                            verificationCodeError = null
+                        },
+                        label = { Text("Código de 4 dígitos del comercio") },
+                        singleLine = true,
+                        isError = verificationCodeError != null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Slate800,
+                            unfocusedContainerColor = Slate800,
+                            focusedTextColor = PureWhite,
+                            unfocusedTextColor = PureWhite,
+                            focusedBorderColor = BrandBlue,
+                            unfocusedBorderColor = Slate700,
+                            focusedLabelColor = BrandSkyTint,
+                            unfocusedLabelColor = Slate400
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("pickup_code_input")
+                    )
+                    if (verificationCodeError != null) {
+                        Text(
+                            text = verificationCodeError.orEmpty(),
+                            color = BrandRed,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    if (req.pickupCode.isNotBlank()) {
+                        Text(
+                            text = if (revealTestCodeHint) {
+                                "Código del comercio (prueba): ${req.pickupCode}"
+                            } else {
+                                "Ver código del comercio (prueba)"
+                            },
+                            color = BrandSkyTint,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clickable { revealTestCodeHint = !revealTestCodeHint }
+                                .padding(vertical = 4.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (mapViewModel.verifyPickupCodeAndStartDelivery(verificationCodeInput)) {
+                            showPickupCodeDialog = false
+                            verificationCodeInput = ""
+                            verificationCodeError = null
+                            revealTestCodeHint = false
+                        } else {
+                            verificationCodeError = "Código incorrecto. Verifica los 4 dígitos con el comercio."
+                        }
+                    },
+                    modifier = Modifier.testTag("confirm_pickup_code_button")
+                ) {
+                    Text("Verificar y Salir", color = BrandEmerald, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPickupCodeDialog = false }) {
+                    Text("Cancelar", color = Slate400)
+                }
+            }
+        )
+    }
+
+    if (showDeliveryCodeDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeliveryCodeDialog = false },
+            containerColor = Slate900,
+            titleContentColor = PureWhite,
+            textContentColor = Slate300,
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.VerifiedUser,
+                    contentDescription = null,
+                    tint = BrandEmerald,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = { Text("Código de entrega del cliente", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Pide a ${req.passengerName} su código de verificación de 4 dígitos antes de entregar el pedido.",
+                        color = Slate300,
+                        fontSize = 13.sp
+                    )
+                    OutlinedTextField(
+                        value = verificationCodeInput,
+                        onValueChange = { input ->
+                            verificationCodeInput = input.filter { it.isDigit() }.take(4)
+                            verificationCodeError = null
+                        },
+                        label = { Text("Código de 4 dígitos del cliente") },
+                        singleLine = true,
+                        isError = verificationCodeError != null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Slate800,
+                            unfocusedContainerColor = Slate800,
+                            focusedTextColor = PureWhite,
+                            unfocusedTextColor = PureWhite,
+                            focusedBorderColor = BrandEmerald,
+                            unfocusedBorderColor = Slate700,
+                            focusedLabelColor = BrandEmerald,
+                            unfocusedLabelColor = Slate400
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("delivery_code_input")
+                    )
+                    if (verificationCodeError != null) {
+                        Text(
+                            text = verificationCodeError.orEmpty(),
+                            color = BrandRed,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    if (req.deliveryCode.isNotBlank()) {
+                        Text(
+                            text = if (revealTestCodeHint) {
+                                "Código del cliente (prueba): ${req.deliveryCode}"
+                            } else {
+                                "Ver código del cliente (prueba)"
+                            },
+                            color = BrandSkyTint,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clickable { revealTestCodeHint = !revealTestCodeHint }
+                                .padding(vertical = 4.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (mapViewModel.verifyDeliveryCodeAndComplete(verificationCodeInput)) {
+                            showDeliveryCodeDialog = false
+                            verificationCodeInput = ""
+                            verificationCodeError = null
+                            revealTestCodeHint = false
+                        } else {
+                            verificationCodeError = "Código incorrecto. Solicita el PIN correcto al cliente."
+                        }
+                    },
+                    modifier = Modifier.testTag("confirm_delivery_code_button")
+                ) {
+                    Text("Confirmar Entrega", color = BrandEmerald, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeliveryCodeDialog = false }) {
+                    Text("Cancelar", color = Slate400)
+                }
+            }
+        )
+    }
+
+    val activeRoutePolyline = when (driverState.tripStage) {
+        DriverTripStage.OFFER_AVAILABLE -> driverState.previewRoutePoints
+        DriverTripStage.HEADING_TO_PICKUP,
+        DriverTripStage.TRIP_IN_PROGRESS ->
+            driverState.displayedRoutePoints.ifEmpty { driverState.previewRoutePoints }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         ViaKaabInteractiveMap(
             pickupLatLng = LatLng(req.startLat, req.startLng),
-            pickupTitle = if (req.isDeliveryOrCommerce) "Recoger: ${req.origin.take(24)}" else "Salida: ${req.origin.take(24)}",
+            pickupTitle = if (req.isDeliveryOrCommerce) {
+                "Recoger: ${req.origin.take(18)}"
+            } else {
+                req.origin.take(22)
+            },
             pickupSnippet = "${req.passengerName} ($${req.fareMxn} MXN)",
             destinationLatLng = LatLng(req.endLat, req.endLng),
-            destinationTitle = "Entrega/Destino: ${req.destination}",
+            destinationTitle = if (req.isDeliveryOrCommerce) {
+                "Entregar: ${req.destination.take(18)}"
+            } else {
+                req.destination.take(22)
+            },
             destinationSnippet = req.serviceTypeLabel,
             routeColor = if (req.isDeliveryOrCommerce) BrandBlue else BrandEmerald,
+            routePolylinePoints = activeRoutePolyline,
             hasLocationPermission = hasLocationPermission,
             landmarks = mapViewModel.quickLandmarks,
             onlineUnits = onlineUnits,
@@ -526,14 +764,20 @@ fun DriverMapScreen(
             },
             driverLabel = session.effectiveDisplayName,
             isSearchingDrivers = false,
-            etaMinutes = if (driverState.tripStage != DriverTripStage.OFFER_AVAILABLE) 4 else null,
-            bottomOverlayReserveDp = 310.dp,
-            badgeTopPaddingDp = 108.dp,
+            etaMinutes = if (driverState.tripStage != DriverTripStage.OFFER_AVAILABLE) {
+                driverState.remainingRouteEtaMinutes.takeIf { it > 0 } ?: 4
+            } else {
+                null
+            },
+            topOverlayReserveDp = if (driverState.tripStage != DriverTripStage.OFFER_AVAILABLE) 216.dp else 128.dp,
+            bottomOverlayReserveDp = if (isFloatingMinimized) 150.dp else 330.dp,
+            showTopStatusPill = false,
+            recenterTrigger = recenterTrigger,
             onGoogleMapReady = { googleMapRef = it },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Top Bar: Menu, Dynamic Role Switcher + Earnings, Online Switch
+        // Top Bar: Menu, Earnings, Online Switch + Non-overlapping Role & Online Units Row
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -552,7 +796,7 @@ fun DriverMapScreen(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Slate900.copy(alpha = 0.90f))
+                        .background(Slate900.copy(alpha = 0.92f))
                         .testTag("driver_menu_button")
                 ) {
                     Icon(Icons.Default.Menu, contentDescription = "Menú Conductor", tint = PureWhite)
@@ -561,7 +805,7 @@ fun DriverMapScreen(
                 Column(
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Slate900.copy(alpha = 0.90f))
+                        .background(Slate900.copy(alpha = 0.92f))
                         .padding(horizontal = 14.dp, vertical = 7.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -581,7 +825,7 @@ fun DriverMapScreen(
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
-                        .background(Slate900.copy(alpha = 0.90f))
+                        .background(Slate900.copy(alpha = 0.92f))
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -601,43 +845,99 @@ fun DriverMapScreen(
                 }
             }
 
-            // Dynamic active role badge (tap to switch between Conductor / Repartidor / Ambos / Pasajero)
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = Slate900.copy(alpha = 0.92f),
-                border = BorderStroke(1.dp, BrandEmerald.copy(alpha = 0.5f)),
-                modifier = Modifier
-                    .clickable { showQuickRoleDialog = true }
-                    .testTag("driver_role_switcher_pill")
+            // Secondary status row: Active role switcher on left + Online units badge on right (zero overlap)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = Slate900.copy(alpha = 0.92f),
+                    border = BorderStroke(1.dp, BrandEmerald.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .clickable { showQuickRoleDialog = true }
+                        .testTag("driver_role_switcher_pill")
                 ) {
-                    Icon(
-                        imageVector = when (session.role) {
-                            UserRole.DELIVERY -> Icons.Default.TwoWheeler
-                            else -> Icons.Default.DirectionsCar
-                        },
-                        contentDescription = null,
-                        tint = BrandEmerald,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Perfil: ${session.role.displayName}",
-                        color = PureWhite,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        imageVector = Icons.Default.SwapHoriz,
-                        contentDescription = "Cambiar perfil",
-                        tint = BrandSkyTint,
-                        modifier = Modifier.size(15.dp)
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = when (session.role) {
+                                UserRole.DELIVERY -> Icons.Default.TwoWheeler
+                                else -> Icons.Default.DirectionsCar
+                            },
+                            contentDescription = null,
+                            tint = BrandEmerald,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Perfil: ${session.role.displayName}",
+                            color = PureWhite,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.SwapHoriz,
+                            contentDescription = "Cambiar perfil",
+                            tint = BrandSkyTint,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
                 }
+
+                val unitsCount = onlineUnits.size
+                val unitsText = when (unitsCount) {
+                    1 -> "1 unidad en línea"
+                    else -> "$unitsCount unidades en línea"
+                }
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = Slate900.copy(alpha = 0.92f),
+                    border = BorderStroke(
+                        1.dp,
+                        if (unitsCount > 0) BrandEmerald.copy(alpha = 0.55f) else Slate700
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(if (unitsCount > 0) BrandEmerald else Slate400)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = unitsText,
+                            color = if (unitsCount > 0) PureWhite else Slate300,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            if (driverState.tripStage != DriverTripStage.OFFER_AVAILABLE) {
+                DriverTurnByTurnBanner(
+                    tripStage = driverState.tripStage,
+                    isDelivery = req.isDeliveryOrCommerce,
+                    nextTurnDistanceLabel = driverState.nextTurnDistanceLabel,
+                    nextInstructionText = driverState.nextInstructionText,
+                    nextTurnManeuver = driverState.nextTurnManeuver,
+                    remainingDistanceLabel = driverState.remainingRouteDistanceLabel.ifBlank { req.distanceKm },
+                    remainingEtaMinutes = driverState.remainingRouteEtaMinutes.coerceAtLeast(1),
+                    routeSourceLabel = driverState.routeSourceLabel,
+                    isRecalculating = driverState.isRecalculatingRoute,
+                    onRecalculate = mapViewModel::forceRecalculateDriverRoute
+                )
             }
         }
 
@@ -654,82 +954,86 @@ fun DriverMapScreen(
             label = "driver_live_dot"
         )
 
-        Column(
+        val centerOnDriverAction: () -> Unit = {
+            recenterTrigger++
+            if (hasLocationPermission) {
+                fetchDriverLocation()
+                val target = driverState.driverLatLng
+                if (target != null && googleMapRef != null) {
+                    googleMapRef?.animateCamera(
+                        CameraUpdateFactory.newLatLngZoom(target, 15.6f)
+                    )
+                } else if (target == null) {
+                    Toast.makeText(
+                        context,
+                        "Centrando mapa en tiempo real...",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } else {
+                permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        }
+
+        AnimatedContent(
+            targetState = isFloatingMinimized,
+            label = "driver_floating_window_state",
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(
-                    onClick = { showSosDialog = true },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BrandRed,
-                        contentColor = PureWhite
-                    ),
-                    shape = RoundedCornerShape(14.dp),
+        ) { minimized ->
+            if (minimized) {
+                Column(
                     modifier = Modifier
-                        .height(48.dp)
-                        .testTag("driver_sos_button")
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(Icons.Default.Emergency, contentDescription = "SOS Policía", modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("SOS", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                }
-
-                IconButton(
-                    onClick = {
-                        if (hasLocationPermission) {
-                            fetchDriverLocation()
-                            val target = driverState.driverLatLng
-                            if (target != null && googleMapRef != null) {
-                                googleMapRef?.animateCamera(
-                                    CameraUpdateFactory.newLatLngZoom(target, 15.6f)
-                                )
-                            } else if (target == null) {
-                                Toast.makeText(
-                                    context,
-                                    "Obteniendo señal GPS en tiempo real...",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        } else {
-                            permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                    // MyLocation button neatly above right-aligned bubble (never obscured)
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        IconButton(
+                            onClick = centerOnDriverAction,
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Slate900.copy(alpha = 0.92f))
+                        ) {
+                            Icon(Icons.Default.MyLocation, contentDescription = "Centrar mapa", tint = PureWhite)
                         }
-                    },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Slate900.copy(alpha = 0.88f))
-                ) {
-                    Icon(Icons.Default.MyLocation, contentDescription = "Centrar mapa", tint = PureWhite)
-                }
-            }
+                    }
 
-            AnimatedContent(
-                targetState = isFloatingMinimized,
-                label = "driver_floating_window_state"
-            ) { minimized ->
-                if (minimized) {
-                    // Draggable compact floating bubble over the map
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        contentAlignment = Alignment.BottomEnd
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Button(
+                            onClick = { showSosDialog = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = BrandRed,
+                                contentColor = PureWhite
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("driver_sos_button")
+                        ) {
+                            Icon(Icons.Default.Emergency, contentDescription = "SOS Policía", modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("SOS", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
                         Surface(
-                            shape = RoundedCornerShape(24.dp),
+                            shape = RoundedCornerShape(22.dp),
                             color = Slate900.copy(alpha = 0.96f),
                             shadowElevation = 16.dp,
                             border = BorderStroke(1.5.dp, activeAccent.copy(alpha = 0.8f)),
                             modifier = Modifier
+                                .widthIn(max = 236.dp)
                                 .offset {
                                     IntOffset(
                                         x = floatBubbleOffsetX.roundToInt(),
@@ -739,67 +1043,109 @@ fun DriverMapScreen(
                                 .pointerInput(Unit) {
                                     detectDragGestures { change, dragAmount ->
                                         change.consume()
-                                        floatBubbleOffsetX = (floatBubbleOffsetX + dragAmount.x).coerceIn(-520f, 40f)
-                                        floatBubbleOffsetY = (floatBubbleOffsetY + dragAmount.y).coerceIn(-900f, 20f)
+                                        floatBubbleOffsetX = (floatBubbleOffsetX + dragAmount.x).coerceIn(-120f, 12f)
+                                        floatBubbleOffsetY = (floatBubbleOffsetY + dragAmount.y).coerceIn(-480f, 0f)
                                     }
                                 }
-                                .clickable { isFloatingMinimized = false }
+                                .clickable {
+                                    floatBubbleOffsetX = 0f
+                                    floatBubbleOffsetY = 0f
+                                    isFloatingMinimized = false
+                                }
                                 .testTag("driver_floating_bubble")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(9.dp)
+                                        .size(8.dp)
                                         .clip(CircleShape)
                                         .background(
                                             (if (driverState.isOnline) BrandEmerald else Slate400)
                                                 .copy(alpha = if (driverState.isOnline) liveDotAlpha else 0.8f)
                                         )
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(7.dp))
                                 Icon(
                                     imageVector = categoryIcon(req.requestCategory),
                                     contentDescription = null,
                                     tint = activeAccent,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(17.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
+                                Spacer(modifier = Modifier.width(7.dp))
+                                Column(modifier = Modifier.weight(1f, fill = false)) {
                                     Text(
                                         text = if (driverState.isOnline) {
-                                            "$${req.fareMxn} MXN · ${req.origin.take(16)}"
+                                            "$${req.fareMxn} · ${req.origin}"
                                         } else {
                                             "Fuera de servicio"
                                         },
                                         color = PureWhite,
-                                        fontSize = 13.sp,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
-                                        maxLines = 1
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = if (driverState.isOnline) {
-                                            "${visibleRequests.size} activas · Act. ${driverState.autoCycleSecondsLeft}s"
+                                            "${visibleRequests.size} activas · ${driverState.autoCycleSecondsLeft}s"
                                         } else {
-                                            "Toca para abrir ventana"
+                                            "Toca para abrir"
                                         },
                                         color = BrandSkyTint,
-                                        fontSize = 10.sp
+                                        fontSize = 10.sp,
+                                        maxLines = 1
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(10.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Icon(
                                     imageVector = Icons.Default.OpenInFull,
                                     contentDescription = "Expandir ventana flotante",
                                     tint = BrandEmerald,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(17.dp)
                                 )
                             }
                         }
                     }
-                } else {
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { showSosDialog = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = BrandRed,
+                                contentColor = PureWhite
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("driver_sos_button")
+                        ) {
+                            Icon(Icons.Default.Emergency, contentDescription = "SOS Policía", modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("SOS", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+
+                        IconButton(
+                            onClick = centerOnDriverAction,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Slate900.copy(alpha = 0.90f))
+                        ) {
+                            Icon(Icons.Default.MyLocation, contentDescription = "Centrar mapa", tint = PureWhite)
+                        }
+                    }
+
                     // Elevated floating window card over the map (draggable vertically + PiP + minimize)
                     Surface(
                         shape = RoundedCornerShape(26.dp),
@@ -912,7 +1258,11 @@ fun DriverMapScreen(
                                     )
                                 }
                                 IconButton(
-                                    onClick = { isFloatingMinimized = true },
+                                    onClick = {
+                                        floatBubbleOffsetX = 0f
+                                        floatBubbleOffsetY = 0f
+                                        isFloatingMinimized = true
+                                    },
                                     modifier = Modifier
                                         .size(48.dp)
                                         .testTag("driver_minimize_floating_button")
@@ -1187,7 +1537,16 @@ fun DriverMapScreen(
 
                                             DriverTripStage.HEADING_TO_PICKUP -> {
                                                 Button(
-                                                    onClick = mapViewModel::advanceDriverTripStage,
+                                                    onClick = {
+                                                        if (req.isDeliveryOrCommerce) {
+                                                            verificationCodeInput = ""
+                                                            verificationCodeError = null
+                                                            revealTestCodeHint = false
+                                                            showPickupCodeDialog = true
+                                                        } else {
+                                                            mapViewModel.advanceDriverTripStage()
+                                                        }
+                                                    },
                                                     colors = ButtonDefaults.buttonColors(
                                                         containerColor = BrandBlue,
                                                         contentColor = PureWhite
@@ -1196,10 +1555,25 @@ fun DriverMapScreen(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
                                                         .height(48.dp)
+                                                        .testTag(
+                                                            if (req.isDeliveryOrCommerce) {
+                                                                "driver_open_pickup_code_button"
+                                                            } else {
+                                                                "driver_start_trip_button"
+                                                            }
+                                                        )
                                                 ) {
+                                                    if (req.isDeliveryOrCommerce) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Lock,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(17.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                    }
                                                     Text(
                                                         text = if (req.isDeliveryOrCommerce) {
-                                                            "Pedido Recogido · Ir a Entregar"
+                                                            "Recoger Pedido · Ingresar Código"
                                                         } else {
                                                             "Pasajero a Bordo · Iniciar Viaje"
                                                         },
@@ -1210,7 +1584,16 @@ fun DriverMapScreen(
 
                                             DriverTripStage.TRIP_IN_PROGRESS -> {
                                                 Button(
-                                                    onClick = mapViewModel::advanceDriverTripStage,
+                                                    onClick = {
+                                                        if (req.isDeliveryOrCommerce) {
+                                                            verificationCodeInput = ""
+                                                            verificationCodeError = null
+                                                            revealTestCodeHint = false
+                                                            showDeliveryCodeDialog = true
+                                                        } else {
+                                                            mapViewModel.advanceDriverTripStage()
+                                                        }
+                                                    },
                                                     colors = ButtonDefaults.buttonColors(
                                                         containerColor = BrandEmerald,
                                                         contentColor = PureWhite
@@ -1219,10 +1602,25 @@ fun DriverMapScreen(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
                                                         .height(48.dp)
+                                                        .testTag(
+                                                            if (req.isDeliveryOrCommerce) {
+                                                                "driver_open_delivery_code_button"
+                                                            } else {
+                                                                "driver_finish_trip_button"
+                                                            }
+                                                        )
                                                 ) {
+                                                    if (req.isDeliveryOrCommerce) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.VerifiedUser,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(17.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                    }
                                                     Text(
                                                         text = if (req.isDeliveryOrCommerce) {
-                                                            "Entregar Pedido y Cobrar $${req.fareMxn} MXN"
+                                                            "Entregar Pedido · Pedir Código ($${req.fareMxn} MXN)"
                                                         } else {
                                                             "Finalizar Viaje y Cobrar $${req.fareMxn} MXN"
                                                         },
@@ -1337,4 +1735,119 @@ private fun categoryAccent(category: DriverRequestCategory): Color = when (categ
     DriverRequestCategory.PHARMACY_ORDER -> BrandBlue
     DriverRequestCategory.SUPERMARKET_ORDER -> BrandSky
     DriverRequestCategory.PARCEL_DELIVERY -> BrandSkyTint
+}
+
+@Composable
+private fun DriverTurnByTurnBanner(
+    tripStage: DriverTripStage,
+    isDelivery: Boolean,
+    nextTurnDistanceLabel: String,
+    nextInstructionText: String,
+    nextTurnManeuver: String,
+    remainingDistanceLabel: String,
+    remainingEtaMinutes: Int,
+    routeSourceLabel: String,
+    isRecalculating: Boolean,
+    onRecalculate: () -> Unit
+) {
+    val accent = if (tripStage == DriverTripStage.TRIP_IN_PROGRESS) BrandEmerald else BrandBlue
+    val stageTag = when {
+        tripStage == DriverTripStage.HEADING_TO_PICKUP && isDelivery -> "Recolección en comercio"
+        tripStage == DriverTripStage.HEADING_TO_PICKUP -> "Hacia punto de recogida"
+        isDelivery -> "En ruta hacia entrega"
+        else -> "Viaje en curso al destino"
+    }
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = Slate900.copy(alpha = 0.96f),
+        shadowElevation = 10.dp,
+        border = BorderStroke(1.2.dp, accent.copy(alpha = 0.85f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("driver_turn_navigation_banner")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(accent.copy(alpha = 0.20f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = mapManeuverIcon(nextTurnManeuver),
+                    contentDescription = "Indicador de giro",
+                    tint = accent,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = nextTurnDistanceLabel.ifBlank { "En ruta" },
+                        color = accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isRecalculating) "· Recalculando calle..." else "· $stageTag",
+                        color = if (isRecalculating) BrandSkyTint else Slate400,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = nextInstructionText.ifBlank { "Sigue la ruta trazada en el mapa" },
+                    color = PureWhite,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val sourceSuffix = routeSourceLabel.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+                Text(
+                    text = "$remainingDistanceLabel · ~$remainingEtaMinutes min$sourceSuffix",
+                    color = BrandSkyTint,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(
+                onClick = onRecalculate,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("driver_recalculate_route_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Recalcular ruta",
+                    tint = BrandSkyTint,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun mapManeuverIcon(maneuver: String): ImageVector = when {
+    "arrive" in maneuver -> Icons.Default.Flag
+    "roundabout" in maneuver || "rotary" in maneuver -> Icons.Default.RoundaboutRight
+    "uturn" in maneuver -> Icons.Default.UTurnLeft
+    "slight-left" in maneuver || "slight_left" in maneuver -> Icons.Default.TurnSlightLeft
+    "slight-right" in maneuver || "slight_right" in maneuver -> Icons.Default.TurnSlightRight
+    "left" in maneuver -> Icons.Default.TurnLeft
+    "right" in maneuver -> Icons.Default.TurnRight
+    "straight" in maneuver -> Icons.Default.Straight
+    else -> Icons.Default.Navigation
 }

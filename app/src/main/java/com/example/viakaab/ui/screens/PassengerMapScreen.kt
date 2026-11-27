@@ -7,10 +7,18 @@ import android.os.Looper
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,10 +32,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,9 +50,12 @@ import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.ShareLocation
@@ -63,6 +76,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -72,14 +87,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.viakaab.model.ActiveLiveTrip
 import com.example.viakaab.model.LiveTripPhase
 import com.example.viakaab.model.ServiceMode
 import com.example.viakaab.ui.components.LiveTripTrackingCard
@@ -96,7 +115,6 @@ import com.example.viakaab.ui.theme.Slate400
 import com.example.viakaab.ui.theme.Slate700
 import com.example.viakaab.ui.theme.Slate800
 import com.example.viakaab.ui.theme.Slate900
-import com.example.viakaab.ui.theme.Slate950
 import com.example.viakaab.viewmodel.MapViewModel
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -106,6 +124,7 @@ import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.model.LatLng
+import kotlin.math.roundToInt
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -114,6 +133,8 @@ fun PassengerMapScreen(
     initialMode: ServiceMode = ServiceMode.STANDARD,
     initialAssistanceNote: String = "",
     initialDestinationQuery: String = "",
+    isInPipMode: Boolean = false,
+    onEnterFloatingPip: () -> Boolean = { false },
     onBack: () -> Unit,
     onOpenProfileMenu: () -> Unit
 ) {
@@ -133,6 +154,11 @@ fun PassengerMapScreen(
     }
     var showConfirmDialog by rememberSaveable { mutableStateOf(false) }
     var showSosDialog by rememberSaveable { mutableStateOf(false) }
+    var isFloatingMinimized by rememberSaveable { mutableStateOf(false) }
+    var floatBubbleOffsetX by remember { mutableFloatStateOf(0f) }
+    var floatBubbleOffsetY by remember { mutableFloatStateOf(0f) }
+    var floatCardOffsetY by remember { mutableFloatStateOf(0f) }
+    var recenterTrigger by remember { mutableIntStateOf(0) }
 
     val fusedLocationClient = remember {
         LocationServices.getFusedLocationProviderClient(context)
@@ -319,6 +345,17 @@ fun PassengerMapScreen(
     }
 
     val liveTrip = uiState.activeLiveTrip
+
+    if (isInPipMode) {
+        PassengerPipFloatingView(
+            liveTrip = liveTrip,
+            selectedMode = uiState.selectedMode,
+            destinationText = uiState.destinationText,
+            fareOfferText = uiState.fareOfferText
+        )
+        return
+    }
+
     val activeDriverLatLng = liveTrip?.let {
         if (it.phase == LiveTripPhase.DRIVER_ARRIVING || it.phase == LiveTripPhase.IN_PROGRESS) {
             LatLng(it.driverLat, it.driverLng)
@@ -347,6 +384,7 @@ fun PassengerMapScreen(
                 ?: uiState.destinationMarkerTitle.ifBlank { uiState.destinationText },
             destinationSnippet = "Punto de llegada de viaje / entrega",
             routeColor = BrandBlue,
+            routePolylinePoints = uiState.streetRoutePoints,
             hasLocationPermission = hasLocationPermission,
             landmarks = mapViewModel.quickLandmarks,
             onlineUnits = onlineUnits,
@@ -354,8 +392,14 @@ fun PassengerMapScreen(
             driverLabel = liveTrip?.driverName ?: "Unidad ViaKaab",
             isSearchingDrivers = liveTrip?.phase == LiveTripPhase.SEARCHING,
             etaMinutes = liveTrip?.etaMinutes,
-            bottomOverlayReserveDp = if (liveTrip != null && uiState.isLiveTripPanelExpanded) 310.dp else 360.dp,
-            badgeTopPaddingDp = 78.dp,
+            topOverlayReserveDp = 120.dp,
+            bottomOverlayReserveDp = when {
+                isFloatingMinimized -> 132.dp
+                liveTrip != null && uiState.isLiveTripPanelExpanded -> 340.dp
+                else -> 430.dp
+            },
+            badgeTopPaddingDp = 82.dp,
+            recenterTrigger = recenterTrigger,
             onMapTap = mapViewModel::onMapTapped,
             onGoogleMapReady = { googleMapRef = it },
             modifier = Modifier.fillMaxSize()
@@ -436,101 +480,315 @@ fun PassengerMapScreen(
             }
         }
 
-        // Bottom Sheet + Floating Controls
-        Column(
+        // Floating Window / Draggable Bubble + Floating Controls
+        val floatingAccent = when {
+            liveTrip != null -> BrandEmerald
+            uiState.selectedMode == ServiceMode.DELIVERY -> BrandBlue
+            else -> BrandEmerald
+        }
+        val livePulseTransition = rememberInfiniteTransition(label = "passenger_live_pulse")
+        val liveDotAlpha by livePulseTransition.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 700, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "passenger_live_dot"
+        )
+
+        val centerPassengerLocationAction: () -> Unit = {
+            recenterTrigger++
+            if (hasLocationPermission) {
+                mapViewModel.resetPickupToRealTimeGps()
+                fetchLocation()
+            } else {
+                permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        }
+
+        AnimatedContent(
+            targetState = isFloatingMinimized,
+            label = "passenger_floating_window_state",
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (liveTrip != null && !uiState.isLiveTripPanelExpanded) {
-                    Button(
-                        onClick = { mapViewModel.setLiveTripPanelExpanded(true) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = BrandBlue,
-                            contentColor = PureWhite
-                        ),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .height(48.dp)
-                            .testTag("reopen_live_trip_button")
-                    ) {
-                        Icon(Icons.Default.DirectionsCar, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Ver viaje en tiempo real", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    Spacer(modifier = Modifier.width(1.dp))
-                }
-
-                IconButton(
-                    onClick = {
-                        if (hasLocationPermission) {
-                            mapViewModel.resetPickupToRealTimeGps()
-                            fetchLocation()
-                        } else {
-                            permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-                        }
-                    },
+        ) { minimized ->
+            if (minimized) {
+                Column(
                     modifier = Modifier
-                        .size(50.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Slate900.copy(alpha = 0.90f))
-                        .testTag("passenger_my_location_fab")
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(
-                        Icons.Default.MyLocation,
-                        contentDescription = "Usar mi ubicación en tiempo real",
-                        tint = BrandEmerald
-                    )
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 470.dp)
-                    .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
-                    .background(Slate900)
-                    .border(1.dp, Slate700.copy(alpha = 0.7f), RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
-                    .navigationBarsPadding()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 14.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .padding(bottom = 12.dp)
-                        .width(40.dp)
-                        .height(4.dp)
-                        .clip(CircleShape)
-                        .background(Slate700)
-                )
-
-                if (liveTrip != null && uiState.isLiveTripPanelExpanded) {
-                    LiveTripTrackingCard(
-                        liveTrip = liveTrip,
-                        gpsStatusLabel = uiState.lastGpsUpdatedLabel,
-                        currentLat = uiState.userLatLng.latitude,
-                        currentLng = uiState.userLatLng.longitude,
-                        onShareWhatsApp = {
-                            shareRouteViaWhatsApp(
-                                context = context,
-                                trustedPhone = trustedContactPhone,
-                                message = mapViewModel.buildWhatsAppShareMessage()
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        IconButton(
+                            onClick = centerPassengerLocationAction,
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Slate900.copy(alpha = 0.92f))
+                                .testTag("passenger_my_location_fab")
+                        ) {
+                            Icon(
+                                Icons.Default.MyLocation,
+                                contentDescription = "Usar mi ubicación en tiempo real",
+                                tint = BrandEmerald
                             )
-                        },
-                        onOpenSos = { showSosDialog = true },
-                        onMinimize = { mapViewModel.setLiveTripPanelExpanded(false) },
-                        onCloseTrip = mapViewModel::closeLiveTrip
-                    )
-                } else {
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(22.dp),
+                            color = Slate900.copy(alpha = 0.96f),
+                            shadowElevation = 16.dp,
+                            border = BorderStroke(1.5.dp, floatingAccent.copy(alpha = 0.85f)),
+                            modifier = Modifier
+                                .widthIn(max = 264.dp)
+                                .offset {
+                                    IntOffset(
+                                        x = floatBubbleOffsetX.roundToInt(),
+                                        y = floatBubbleOffsetY.roundToInt()
+                                    )
+                                }
+                                .pointerInput(Unit) {
+                                    detectDragGestures { change, dragAmount ->
+                                        change.consume()
+                                        floatBubbleOffsetX = (floatBubbleOffsetX + dragAmount.x).coerceIn(-120f, 12f)
+                                        floatBubbleOffsetY = (floatBubbleOffsetY + dragAmount.y).coerceIn(-480f, 0f)
+                                    }
+                                }
+                                .clickable {
+                                    floatBubbleOffsetX = 0f
+                                    floatBubbleOffsetY = 0f
+                                    isFloatingMinimized = false
+                                }
+                                .testTag("passenger_floating_bubble")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(floatingAccent.copy(alpha = liveDotAlpha))
+                                )
+                                Spacer(modifier = Modifier.width(7.dp))
+                                Icon(
+                                    imageVector = when (uiState.selectedMode) {
+                                        ServiceMode.DELIVERY -> Icons.Default.TwoWheeler
+                                        ServiceMode.INTERCITY -> Icons.Default.Route
+                                        ServiceMode.STANDARD -> Icons.Default.DirectionsCar
+                                    },
+                                    contentDescription = null,
+                                    tint = floatingAccent,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                                Spacer(modifier = Modifier.width(7.dp))
+                                Column(modifier = Modifier.weight(1f, fill = false)) {
+                                    Text(
+                                        text = when {
+                                            liveTrip != null -> "${liveTrip.driverName} · ${liveTrip.etaMinutes} min"
+                                            uiState.destinationText.isNotBlank() -> uiState.destinationText
+                                            else -> "Solicitar ${uiState.selectedMode.label}"
+                                        },
+                                        color = PureWhite,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = liveTrip?.phase?.label ?: "Toca para abrir ventana",
+                                        color = BrandSkyTint,
+                                        fontSize = 10.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = Icons.Default.OpenInFull,
+                                    contentDescription = "Expandir ventana flotante",
+                                    tint = BrandEmerald,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (liveTrip != null && !uiState.isLiveTripPanelExpanded) {
+                            Button(
+                                onClick = { mapViewModel.setLiveTripPanelExpanded(true) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = BrandBlue,
+                                    contentColor = PureWhite
+                                ),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("reopen_live_trip_button")
+                            ) {
+                                Icon(Icons.Default.DirectionsCar, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Ver viaje en tiempo real", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Spacer(modifier = Modifier.width(1.dp))
+                        }
+
+                        IconButton(
+                            onClick = centerPassengerLocationAction,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Slate900.copy(alpha = 0.92f))
+                                .testTag("passenger_my_location_fab")
+                        ) {
+                            Icon(
+                                Icons.Default.MyLocation,
+                                contentDescription = "Usar mi ubicación en tiempo real",
+                                tint = BrandEmerald
+                            )
+                        }
+                    }
+
+                    // Elevated Floating Window Card over the map (draggable vertically + PiP + minimize)
+                    Surface(
+                        shape = RoundedCornerShape(26.dp),
+                        color = Slate900.copy(alpha = 0.96f),
+                        shadowElevation = 18.dp,
+                        border = BorderStroke(1.2.dp, floatingAccent.copy(alpha = 0.55f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .offset { IntOffset(0, floatCardOffsetY.roundToInt()) }
+                            .navigationBarsPadding()
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .testTag("passenger_floating_window")
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 468.dp)
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.CenterHorizontally)
+                                    .padding(bottom = 4.dp)
+                                    .width(38.dp)
+                                    .height(4.dp)
+                                    .clip(CircleShape)
+                                    .background(Slate700)
+                            )
+
+                            // Drag handle + PiP + Minimize controls
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .pointerInput(Unit) {
+                                        detectDragGestures { change, dragAmount ->
+                                            change.consume()
+                                            floatCardOffsetY = (floatCardOffsetY + dragAmount.y)
+                                                .coerceIn(-240f, 30f)
+                                        }
+                                    }
+                                    .padding(bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(floatingAccent.copy(alpha = liveDotAlpha))
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (liveTrip != null) {
+                                        "Viaje activo · ${liveTrip.mode.label}"
+                                    } else {
+                                        "Ventana flotante · ${uiState.selectedMode.label}"
+                                    },
+                                    color = floatingAccent,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(
+                                    onClick = {
+                                        if (!onEnterFloatingPip()) {
+                                            isFloatingMinimized = true
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .testTag("passenger_pip_mode_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PictureInPictureAlt,
+                                        contentDescription = "Pantalla flotante PiP",
+                                        tint = Slate300,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        floatBubbleOffsetX = 0f
+                                        floatBubbleOffsetY = 0f
+                                        isFloatingMinimized = true
+                                    },
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .testTag("passenger_minimize_floating_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.KeyboardArrowDown,
+                                        contentDescription = "Minimizar a burbuja flotante",
+                                        tint = Slate300,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+
+                            if (liveTrip != null && uiState.isLiveTripPanelExpanded) {
+                                LiveTripTrackingCard(
+                                    liveTrip = liveTrip,
+                                    gpsStatusLabel = uiState.lastGpsUpdatedLabel,
+                                    currentLat = uiState.userLatLng.latitude,
+                                    currentLng = uiState.userLatLng.longitude,
+                                    onShareWhatsApp = {
+                                        shareRouteViaWhatsApp(
+                                            context = context,
+                                            trustedPhone = trustedContactPhone,
+                                            message = mapViewModel.buildWhatsAppShareMessage()
+                                        )
+                                    },
+                                    onOpenSos = { showSosDialog = true },
+                                    onMinimize = { mapViewModel.setLiveTripPanelExpanded(false) },
+                                    onCloseTrip = mapViewModel::closeLiveTrip
+                                )
+                            } else {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -841,8 +1099,93 @@ fun PassengerMapScreen(
                     ) {
                         Text(buttonLabel, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     }
+                            }
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PassengerPipFloatingView(
+    liveTrip: ActiveLiveTrip?,
+    selectedMode: ServiceMode,
+    destinationText: String,
+    fareOfferText: String
+) {
+    Surface(
+        color = Slate900,
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(BrandEmerald)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = liveTrip?.phase?.label ?: "ViaKaab ${selectedMode.label}",
+                    color = BrandEmerald,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Column {
+                if (liveTrip != null) {
+                    Text(
+                        text = "${liveTrip.driverName} · ${liveTrip.etaMinutes} min",
+                        color = BrandSkyTint,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = liveTrip.destination,
+                        color = PureWhite,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else {
+                    Text(
+                        text = destinationText.ifBlank { "Selecciona destino en mapa" },
+                        color = PureWhite,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            val fareDisplay = liveTrip?.fareMxn?.let { "$$it MXN" }
+                ?: fareOfferText.takeIf { it.isNotBlank() }?.let { "$$it MXN" }
+                ?: "Felipe Carrillo Puerto"
+            Text(
+                text = fareDisplay,
+                color = Slate300,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
         }
     }
 }

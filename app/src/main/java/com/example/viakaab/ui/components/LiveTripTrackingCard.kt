@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.ShareLocation
 import androidx.compose.material3.Button
@@ -48,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.viakaab.model.ActiveLiveTrip
 import com.example.viakaab.model.LiveTripPhase
+import com.example.viakaab.model.ServiceMode
 import com.example.viakaab.ui.theme.BrandBlue
 import com.example.viakaab.ui.theme.BrandEmerald
 import com.example.viakaab.ui.theme.BrandRed
@@ -276,6 +278,53 @@ fun LiveTripTrackingCard(
                     color = Slate400,
                     fontSize = 11.sp
                 )
+
+                if (liveTrip.mode == ServiceMode.DELIVERY && liveTrip.deliveryCode.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = BrandEmerald.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, BrandEmerald.copy(alpha = 0.55f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_delivery_pin_card")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Código de entrega",
+                                tint = BrandEmerald,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Tu código de entrega: ${liveTrip.deliveryCode}",
+                                    color = PureWhite,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = "Muéstraselo o díselo al repartidor solo al recibir tu pedido.",
+                                    color = BrandSkyTint,
+                                    fontSize = 11.sp
+                                )
+                                if (liveTrip.pickupCode.isNotBlank()) {
+                                    Text(
+                                        text = "Código comercio: ${liveTrip.pickupCode}",
+                                        color = Slate400,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

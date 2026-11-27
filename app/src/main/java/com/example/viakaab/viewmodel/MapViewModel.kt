@@ -17,6 +17,7 @@ import com.example.viakaab.model.LocalCommerce
 import com.example.viakaab.model.MapVehicleType
 import com.example.viakaab.model.OnlineMapUnit
 import com.example.viakaab.model.ServiceMode
+import com.example.viakaab.model.StreetNavigationRoute
 import com.example.viakaab.model.UserRole
 import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.Job
@@ -33,6 +34,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.random.Random
 
 data class PassengerMapUiState(
     val selectedMode: ServiceMode = ServiceMode.STANDARD,
@@ -51,6 +53,7 @@ data class PassengerMapUiState(
     val destinationMarkerTitle: String = "",
     val estimatedDistanceKm: Double? = null,
     val suggestedFareMxn: Int? = null,
+    val streetRoutePoints: List<LatLng> = emptyList(),
     val activeLiveTrip: ActiveLiveTrip? = null,
     val isLiveTripPanelExpanded: Boolean = false,
     val toastMessage: String? = null
@@ -72,6 +75,21 @@ data class DriverMapUiState(
     val autoCycleSecondsLeft: Int = 12,
     val autoCycleTotalSeconds: Int = 12,
     val isAutoRefreshPaused: Boolean = false,
+    val activeStreetRoute: StreetNavigationRoute? = null,
+    val displayedRoutePoints: List<LatLng> = emptyList(),
+    val previewRoutePoints: List<LatLng> = emptyList(),
+    val currentStepIndex: Int = 0,
+    val nextInstructionText: String = "",
+    val nextTurnDistanceLabel: String = "",
+    val nextTurnManeuver: String = "straight",
+    val remainingRouteDistanceLabel: String = "",
+    val remainingRouteEtaMinutes: Int = 0,
+    val isRecalculatingRoute: Boolean = false,
+    val routeSourceLabel: String = "",
+    val lastRouteFetchDest: LatLng? = null,
+    val lastRouteFetchTimeMs: Long = 0L,
+    val pickupCodeVerified: Boolean = false,
+    val deliveryCodeVerified: Boolean = false,
     val pendingPassengerRatingTarget: DriverRideRequest? = null,
     val toastMessage: String? = null
 ) {
@@ -131,7 +149,9 @@ private fun defaultRequests(): List<DriverRideRequest> = listOf(
         serviceTypeLabel = "Cafetería · ViaKaab Eats",
         requestCategory = DriverRequestCategory.FOOD_ORDER,
         orderDetails = "2x Frappé Horchata Espresso, 1x Club Sándwich + Papas",
-        passengerRatingLabel = "★ 5.0"
+        passengerRatingLabel = "★ 5.0",
+        pickupCode = "4821",
+        deliveryCode = "7394"
     ),
     DriverRideRequest(
         id = "req_pass_2",
@@ -162,7 +182,9 @@ private fun defaultRequests(): List<DriverRideRequest> = listOf(
         serviceTypeLabel = "Fonda / Restaurante",
         requestCategory = DriverRequestCategory.FOOD_ORDER,
         orderDetails = "1x Comida Corrida Poc Chuc, 1x Agua de Chaya 1 L",
-        passengerRatingLabel = "★ 4.9"
+        passengerRatingLabel = "★ 4.9",
+        pickupCode = "3158",
+        deliveryCode = "6249"
     ),
     DriverRideRequest(
         id = "req_eats_farmacia",
@@ -178,7 +200,9 @@ private fun defaultRequests(): List<DriverRideRequest> = listOf(
         serviceTypeLabel = "Farmacia Express",
         requestCategory = DriverRequestCategory.PHARMACY_ORDER,
         orderDetails = "1x Paracetamol 500mg, 2x Suero Electrolit 625ml",
-        passengerRatingLabel = "★ 5.0"
+        passengerRatingLabel = "★ 5.0",
+        pickupCode = "5904",
+        deliveryCode = "8172"
     ),
     DriverRideRequest(
         id = "req_eats_super",
@@ -194,7 +218,9 @@ private fun defaultRequests(): List<DriverRideRequest> = listOf(
         serviceTypeLabel = "Supermercado / Despensa",
         requestCategory = DriverRequestCategory.SUPERMARKET_ORDER,
         orderDetails = "1x Reja de Huevo 30 pzas, 1x Garrafón 20L, 2x Leche 1L",
-        passengerRatingLabel = "★ 4.9"
+        passengerRatingLabel = "★ 4.9",
+        pickupCode = "2647",
+        deliveryCode = "9418"
     ),
     DriverRideRequest(
         id = "req_pass_3",
@@ -225,7 +251,9 @@ private fun defaultRequests(): List<DriverRideRequest> = listOf(
         serviceTypeLabel = "Envío de Paquete",
         requestCategory = DriverRequestCategory.PARCEL_DELIVERY,
         orderDetails = "Paquete mediano · Entregar a recepción",
-        passengerRatingLabel = "★ 4.8"
+        passengerRatingLabel = "★ 4.8",
+        pickupCode = "7083",
+        deliveryCode = "4562"
     )
 )
 
@@ -249,11 +277,14 @@ class MapViewModel(
     val onlineUnits: StateFlow<List<OnlineMapUnit>> = _onlineUnits.asStateFlow()
 
     private var geocodeJob: Job? = null
+    private var driverRouteJob: Job? = null
+    private var passengerRouteJob: Job? = null
 
     init {
         viewModelScope.launch {
             sessionRepository.session.collect {
                 refreshOnlineUnits()
+                refreshDriverPreviewRoute()
             }
         }
         viewModelScope.launch {
@@ -267,6 +298,7 @@ class MapViewModel(
                 tickDriverAutoFeed()
             }
         }
+        refreshDriverPreviewRoute()
     }
 
     fun applyEntryContext(
@@ -364,6 +396,7 @@ class MapViewModel(
                         fareOfferText = it.fareOfferText.ifBlank { suggested.toString() }
                     )
                 }
+                refreshPassengerStreetRoute(origin, destLatLng)
             }
         } else if (trimmed.isEmpty()) {
             _passengerState.update {
@@ -371,7 +404,8 @@ class MapViewModel(
                     destinationLatLng = null,
                     destinationMarkerTitle = "",
                     estimatedDistanceKm = null,
-                    suggestedFareMxn = null
+                    suggestedFareMxn = null,
+                    streetRoutePoints = emptyList()
                 )
             }
         }
@@ -379,7 +413,8 @@ class MapViewModel(
 
     fun selectQuickLandmark(landmark: CarrilloLandmark) {
         geocodeJob?.cancel()
-        val distKm = mapsRepository.calculateDistanceKm(_passengerState.value.userLatLng, landmark.latLng)
+        val origin = _passengerState.value.userLatLng
+        val distKm = mapsRepository.calculateDistanceKm(origin, landmark.latLng)
         val suggested = mapsRepository.suggestFareMxn(distKm, _passengerState.value.selectedMode)
         _passengerState.update {
             it.copy(
@@ -391,6 +426,7 @@ class MapViewModel(
                 fareOfferText = suggested.toString()
             )
         }
+        refreshPassengerStreetRoute(origin, landmark.latLng)
     }
 
     fun updateSeats(value: String) {
@@ -452,6 +488,9 @@ class MapViewModel(
 
     fun onDriverLocationResolved(lat: Double, lng: Double, gpsBearing: Float? = null) {
         val newLatLng = LatLng(lat, lng)
+        var shouldRecalculate = false
+        var recalcTarget: LatLng? = null
+
         _driverState.update { dState ->
             val prev = dState.driverLatLng
             val computedBearing = when {
@@ -460,13 +499,67 @@ class MapViewModel(
                     computeGeoBearing(prev, newLatLng)
                 else -> dState.driverHeadingDegrees
             }
-            dState.copy(
-                driverLatLng = newLatLng,
-                driverHeadingDegrees = computedBearing,
-                hasDriverGpsFix = true,
-                requestQueue = recomputeQueueDistances(dState.requestQueue, newLatLng)
-            )
+
+            val role = sessionRepository.session.value.role
+            val activeReq = dState.activeRequestFor(role)
+            val updatedQueue = recomputeQueueDistances(dState.requestQueue, newLatLng)
+
+            if (dState.tripStage == DriverTripStage.HEADING_TO_PICKUP ||
+                dState.tripStage == DriverTripStage.TRIP_IN_PROGRESS
+            ) {
+                val target = if (dState.tripStage == DriverTripStage.HEADING_TO_PICKUP) {
+                    LatLng(activeReq.startLat, activeReq.startLng)
+                } else {
+                    LatLng(activeReq.endLat, activeReq.endLng)
+                }
+                recalcTarget = target
+                val route = dState.activeStreetRoute
+                val nowMs = System.currentTimeMillis()
+
+                if (route == null || route.points.isEmpty()) {
+                    shouldRecalculate = true
+                    dState.copy(
+                        driverLatLng = newLatLng,
+                        driverHeadingDegrees = computedBearing,
+                        hasDriverGpsFix = true,
+                        requestQueue = updatedQueue
+                    )
+                } else {
+                    val offRouteMeters = mapsRepository.distancePointToRouteMeters(newLatLng, route.points)
+                    if (offRouteMeters > 35.0 && (nowMs - dState.lastRouteFetchTimeMs) >= 4500L) {
+                        shouldRecalculate = true
+                        dState.copy(
+                            driverLatLng = newLatLng,
+                            driverHeadingDegrees = computedBearing,
+                            hasDriverGpsFix = true,
+                            requestQueue = updatedQueue,
+                            isRecalculatingRoute = true,
+                            toastMessage = "Cambio de calle detectado · Recalculando ruta"
+                        )
+                    } else {
+                        val progressed = updateRouteProgressForDriver(dState, route, newLatLng, target)
+                        progressed.copy(
+                            driverLatLng = newLatLng,
+                            driverHeadingDegrees = computedBearing,
+                            hasDriverGpsFix = true,
+                            requestQueue = updatedQueue
+                        )
+                    }
+                }
+            } else {
+                dState.copy(
+                    driverLatLng = newLatLng,
+                    driverHeadingDegrees = computedBearing,
+                    hasDriverGpsFix = true,
+                    requestQueue = updatedQueue
+                )
+            }
         }
+
+        if (shouldRecalculate && recalcTarget != null) {
+            fetchDriverStreetRoute(origin = newLatLng, destination = recalcTarget!!, isRecalculation = true)
+        }
+
         _passengerState.update { pState ->
             val trip = pState.activeLiveTrip
             if (trip != null && (trip.phase == LiveTripPhase.DRIVER_ARRIVING || trip.phase == LiveTripPhase.IN_PROGRESS)) {
@@ -565,11 +658,15 @@ class MapViewModel(
                 fareOfferText = it.fareOfferText.ifBlank { suggested.toString() }
             )
         }
+        refreshPassengerStreetRoute(origin, latLng)
         viewModelScope.launch {
             val address = mapsRepository.reverseGeocode(latLng.latitude, latLng.longitude)
             _passengerState.update { it.copy(destinationText = address) }
         }
     }
+
+    private fun generateFourDigitPin(): String =
+        Random.nextInt(1000, 10000).toString()
 
     fun publishTripOffer() {
         val state = _passengerState.value
@@ -588,8 +685,11 @@ class MapViewModel(
             ?: mapsRepository.calculateDistanceKm(state.userLatLng, destLatLng)
         val distLabel = "${"%.1f".format(distKmValue)} km"
         val tripId = "req_${System.currentTimeMillis()}"
+        val isDelivery = state.selectedMode == ServiceMode.DELIVERY
+        val pickupPin = if (isDelivery) generateFourDigitPin() else ""
+        val deliveryPin = if (isDelivery) generateFourDigitPin() else ""
 
-        val reqCategory = if (state.selectedMode == ServiceMode.DELIVERY) {
+        val reqCategory = if (isDelivery) {
             DriverRequestCategory.PARCEL_DELIVERY
         } else {
             DriverRequestCategory.PASSENGER_RIDE
@@ -607,12 +707,14 @@ class MapViewModel(
             endLng = destLatLng.longitude,
             serviceTypeLabel = state.selectedMode.label,
             requestCategory = reqCategory,
-            orderDetails = if (state.selectedMode == ServiceMode.DELIVERY) {
+            orderDetails = if (isDelivery) {
                 state.packageDetailsText.ifBlank { "Envío solicitado desde mapa" }
             } else {
                 state.assistanceNote
             },
-            passengerRatingLabel = "★ ${sessionRepository.passengerRating.value.displayLabel}"
+            passengerRatingLabel = "★ ${sessionRepository.passengerRating.value.displayLabel}",
+            pickupCode = pickupPin,
+            deliveryCode = deliveryPin
         )
 
         val liveTrip = ActiveLiveTrip(
@@ -630,7 +732,9 @@ class MapViewModel(
             phase = LiveTripPhase.SEARCHING,
             driverLat = state.userLatLng.latitude,
             driverLng = state.userLatLng.longitude,
-            etaMinutes = (distKmValue * 2.5).roundToInt().coerceAtLeast(2)
+            etaMinutes = (distKmValue * 2.5).roundToInt().coerceAtLeast(2),
+            pickupCode = pickupPin,
+            deliveryCode = deliveryPin
         )
 
         val timeNow = SimpleDateFormat("HH:mm:ss", Locale.forLanguageTag("es-MX")).format(Date())
@@ -640,10 +744,15 @@ class MapViewModel(
                 selectedRequestId = newDriverRequest.id,
                 currentRequestIndex = 0,
                 tripStage = DriverTripStage.OFFER_AVAILABLE,
+                pickupCodeVerified = false,
+                deliveryCodeVerified = false,
+                activeStreetRoute = null,
+                displayedRoutePoints = emptyList(),
                 autoCycleSecondsLeft = dState.autoCycleTotalSeconds,
                 feedLastUpdatedLabel = "Nueva solicitud · $timeNow"
             )
         }
+        refreshDriverPreviewRoute()
 
         _passengerState.update {
             it.copy(
@@ -652,6 +761,7 @@ class MapViewModel(
                 toastMessage = "¡Oferta publicada! Sigue tu viaje en tiempo real."
             )
         }
+        refreshPassengerStreetRoute(state.userLatLng, destLatLng)
     }
 
     fun publishStoreDeliveryOrder(
@@ -688,6 +798,9 @@ class MapViewModel(
             EatsCategory.SUPER -> DriverRequestCategory.SUPERMARKET_ORDER
             else -> DriverRequestCategory.FOOD_ORDER
         }
+        val pickupPin = generateFourDigitPin()
+        val deliveryPin = generateFourDigitPin()
+
         val driverRequest = DriverRideRequest(
             id = tripId,
             origin = storeOrigin,
@@ -702,7 +815,9 @@ class MapViewModel(
             serviceTypeLabel = "${commerce.category.label} · ViaKaab Eats",
             requestCategory = reqCat,
             orderDetails = "$itemsSummary$noteSuffix",
-            passengerRatingLabel = "★ ${sessionRepository.passengerRating.value.displayLabel}"
+            passengerRatingLabel = "★ ${sessionRepository.passengerRating.value.displayLabel}",
+            pickupCode = pickupPin,
+            deliveryCode = deliveryPin
         )
 
         val liveTrip = ActiveLiveTrip(
@@ -720,7 +835,9 @@ class MapViewModel(
             phase = LiveTripPhase.SEARCHING,
             driverLat = commerce.lat,
             driverLng = commerce.lng,
-            etaMinutes = (distKmValue * 3.0).roundToInt().coerceIn(8, 30)
+            etaMinutes = (distKmValue * 3.0).roundToInt().coerceIn(8, 30),
+            pickupCode = pickupPin,
+            deliveryCode = deliveryPin
         )
 
         val timeNow = SimpleDateFormat("HH:mm:ss", Locale.forLanguageTag("es-MX")).format(Date())
@@ -730,10 +847,15 @@ class MapViewModel(
                 selectedRequestId = driverRequest.id,
                 currentRequestIndex = 0,
                 tripStage = DriverTripStage.OFFER_AVAILABLE,
+                pickupCodeVerified = false,
+                deliveryCodeVerified = false,
+                activeStreetRoute = null,
+                displayedRoutePoints = emptyList(),
                 autoCycleSecondsLeft = dState.autoCycleTotalSeconds,
                 feedLastUpdatedLabel = "Nuevo pedido · $timeNow"
             )
         }
+        refreshDriverPreviewRoute()
 
         _passengerState.update {
             it.copy(
@@ -748,9 +870,10 @@ class MapViewModel(
                 assistanceNote = "Pedido ${commerce.name}: $itemsSummary",
                 activeLiveTrip = liveTrip,
                 isLiveTripPanelExpanded = true,
-                toastMessage = "¡Pedido enviado a ${commerce.name}! Total $$totalMxn MXN"
+                toastMessage = "¡Pedido enviado a ${commerce.name}! Tu código de entrega es $deliveryPin"
             )
         }
+        refreshPassengerStreetRoute(storeLatLng, currentDestLatLng)
     }
 
     fun setLiveTripPanelExpanded(expanded: Boolean) {
@@ -772,6 +895,7 @@ class MapViewModel(
                 destinationMarkerTitle = "",
                 estimatedDistanceKm = null,
                 suggestedFareMxn = null,
+                streetRoutePoints = emptyList(),
                 toastMessage = "Seguimiento finalizado. Listo para un nuevo viaje."
             )
         }
@@ -855,6 +979,7 @@ class MapViewModel(
                 feedLastUpdatedLabel = "Actualizado · $timeNow"
             )
         }
+        refreshDriverPreviewRoute()
     }
 
     private fun tickDriverAutoFeed() {
@@ -910,6 +1035,7 @@ class MapViewModel(
                 autoCycleSecondsLeft = it.autoCycleTotalSeconds
             )
         }
+        refreshDriverPreviewRoute()
     }
 
     fun selectDriverRequest(requestId: String) {
@@ -917,9 +1043,12 @@ class MapViewModel(
             it.copy(
                 selectedRequestId = requestId,
                 tripStage = DriverTripStage.OFFER_AVAILABLE,
+                pickupCodeVerified = false,
+                deliveryCodeVerified = false,
                 autoCycleSecondsLeft = it.autoCycleTotalSeconds
             )
         }
+        refreshDriverPreviewRoute()
     }
 
     fun sendCounterOffer(amount: String) {
@@ -948,9 +1077,12 @@ class MapViewModel(
                 selectedRequestId = nextReq.id,
                 currentRequestIndex = (currentIdx + 1) % visible.size,
                 tripStage = DriverTripStage.OFFER_AVAILABLE,
+                pickupCodeVerified = false,
+                deliveryCodeVerified = false,
                 toastMessage = "Mostrando siguiente solicitud disponible"
             )
         }
+        refreshDriverPreviewRoute()
     }
 
     fun startDriverRoute() {
@@ -963,10 +1095,39 @@ class MapViewModel(
         } else {
             "Unidad ViaKaab verificada"
         }
+        val pickupPos = LatLng(req.startLat, req.startLng)
+        val currentDriverPos = _driverState.value.driverLatLng
+        val routeOrigin = if (currentDriverPos != null &&
+            mapsRepository.calculateDistanceMeters(currentDriverPos, pickupPos) > 25.0
+        ) {
+            currentDriverPos
+        } else {
+            // If driver GPS isn't locked or is already on top of pickup, show route from pickup or nearby GPS
+            currentDriverPos ?: pickupPos
+        }
+        val routeTarget = if (mapsRepository.calculateDistanceMeters(routeOrigin, pickupPos) < 25.0) {
+            // Already at pickup point: pre-load full leg or pickup anchor
+            pickupPos
+        } else {
+            pickupPos
+        }
+
         _driverState.update {
             it.copy(
                 selectedRequestId = req.id,
                 tripStage = DriverTripStage.HEADING_TO_PICKUP,
+                pickupCodeVerified = false,
+                deliveryCodeVerified = false,
+                activeStreetRoute = null,
+                displayedRoutePoints = emptyList(),
+                nextInstructionText = if (req.isDeliveryOrCommerce) {
+                    "Dirígete a ${req.origin}"
+                } else {
+                    "Dirígete al punto de recogida del pasajero"
+                },
+                nextTurnDistanceLabel = "...",
+                nextTurnManeuver = "straight",
+                isRecalculatingRoute = true,
                 toastMessage = if (req.isDeliveryOrCommerce) {
                     "En camino a recoger pedido en ${req.origin}"
                 } else {
@@ -992,72 +1153,269 @@ class MapViewModel(
             }
         }
         refreshOnlineUnits()
+        fetchDriverStreetRoute(origin = routeOrigin, destination = routeTarget, isRecalculation = false)
+        // Also fetch store/pickup -> destination preview route so repartidor/driver always sees delivery target path
+        fetchDriverPreviewRoute(LatLng(req.startLat, req.startLng), LatLng(req.endLat, req.endLng))
+    }
+
+    fun forceRecalculateDriverRoute() {
+        val role = sessionRepository.session.value.role
+        val state = _driverState.value
+        val req = state.activeRequestFor(role)
+        val target = when (state.tripStage) {
+            DriverTripStage.HEADING_TO_PICKUP -> LatLng(req.startLat, req.startLng)
+            DriverTripStage.TRIP_IN_PROGRESS -> LatLng(req.endLat, req.endLng)
+            DriverTripStage.OFFER_AVAILABLE -> LatLng(req.endLat, req.endLng)
+        }
+        val origin = state.driverLatLng ?: LatLng(req.startLat, req.startLng)
+        _driverState.update { it.copy(isRecalculatingRoute = true) }
+        fetchDriverStreetRoute(origin = origin, destination = target, isRecalculation = true)
+    }
+
+    fun verifyPickupCodeAndStartDelivery(enteredCode: String): Boolean {
+        val role = sessionRepository.session.value.role
+        val currentReq = _driverState.value.activeRequestFor(role)
+        val expected = currentReq.pickupCode.trim()
+        if (expected.isNotEmpty() && enteredCode.trim() != expected) {
+            return false
+        }
+        _driverState.update {
+            it.copy(
+                pickupCodeVerified = true,
+                tripStage = DriverTripStage.TRIP_IN_PROGRESS,
+                activeStreetRoute = null,
+                displayedRoutePoints = emptyList(),
+                isRecalculatingRoute = true,
+                nextInstructionText = "Ruta hacia entrega: ${currentReq.destination}",
+                toastMessage = "Código de comercio verificado · Ruta hacia entrega"
+            )
+        }
+        _passengerState.update { pState ->
+            val live = pState.activeLiveTrip
+            if (live != null && live.id == currentReq.id) {
+                pState.copy(activeLiveTrip = live.copy(phase = LiveTripPhase.IN_PROGRESS))
+            } else {
+                pState
+            }
+        }
+        val origin = _driverState.value.driverLatLng ?: LatLng(currentReq.startLat, currentReq.startLng)
+        val destination = LatLng(currentReq.endLat, currentReq.endLng)
+        fetchDriverStreetRoute(origin = origin, destination = destination, isRecalculation = false)
+        refreshOnlineUnits()
+        return true
+    }
+
+    fun verifyDeliveryCodeAndComplete(enteredCode: String): Boolean {
+        val role = sessionRepository.session.value.role
+        val currentReq = _driverState.value.activeRequestFor(role)
+        val expected = currentReq.deliveryCode.trim()
+        if (expected.isNotEmpty() && enteredCode.trim() != expected) {
+            return false
+        }
+        completeActiveDriverService(currentReq, role)
+        return true
     }
 
     fun advanceDriverTripStage() {
         val role = sessionRepository.session.value.role
-        val currentReq = _driverState.value.activeRequestFor(role)
-        _driverState.update { state ->
-            when (state.tripStage) {
-                DriverTripStage.OFFER_AVAILABLE -> state.copy(
-                    tripStage = DriverTripStage.HEADING_TO_PICKUP,
-                    toastMessage = "En camino al punto de recogida"
-                )
-                DriverTripStage.HEADING_TO_PICKUP -> {
-                    _passengerState.update { pState ->
-                        val live = pState.activeLiveTrip
-                        if (live != null && live.id == currentReq.id) {
-                            pState.copy(activeLiveTrip = live.copy(phase = LiveTripPhase.IN_PROGRESS))
-                        } else {
-                            pState
-                        }
+        val state = _driverState.value
+        val currentReq = state.activeRequestFor(role)
+        when (state.tripStage) {
+            DriverTripStage.OFFER_AVAILABLE -> startDriverRoute()
+            DriverTripStage.HEADING_TO_PICKUP -> {
+                _passengerState.update { pState ->
+                    val live = pState.activeLiveTrip
+                    if (live != null && live.id == currentReq.id) {
+                        pState.copy(activeLiveTrip = live.copy(phase = LiveTripPhase.IN_PROGRESS))
+                    } else {
+                        pState
                     }
-                    state.copy(
+                }
+                _driverState.update {
+                    it.copy(
                         tripStage = DriverTripStage.TRIP_IN_PROGRESS,
-                        toastMessage = if (currentReq.isDeliveryOrCommerce) {
-                            "Pedido recogido · En camino a entregar"
-                        } else {
-                            "¡Pasajero a bordo! Viaje en curso"
-                        }
+                        activeStreetRoute = null,
+                        displayedRoutePoints = emptyList(),
+                        isRecalculatingRoute = true,
+                        nextInstructionText = "Calculando ruta hacia ${currentReq.destination}...",
+                        toastMessage = "¡Pasajero a bordo! Navegando al destino"
                     )
                 }
-                DriverTripStage.TRIP_IN_PROGRESS -> {
-                    val fare = currentReq.fareMxn
-                    sessionRepository.addTripRequest(
-                        origin = currentReq.origin,
-                        destination = currentReq.destination,
-                        fareMxn = "$fare",
-                        mode = if (currentReq.isDeliveryOrCommerce) ServiceMode.DELIVERY else ServiceMode.STANDARD
-                    )
-                    _passengerState.update { pState ->
-                        val live = pState.activeLiveTrip
-                        if (live != null && live.id == currentReq.id) {
-                            pState.copy(
-                                activeLiveTrip = live.copy(
-                                    phase = LiveTripPhase.COMPLETED,
-                                    etaMinutes = 0
-                                )
-                            )
-                        } else {
-                            pState
-                        }
-                    }
-                    val visible = state.visibleRequestsFor(role)
-                    val curIdx = visible.indexOfFirst { it.id == currentReq.id }.coerceAtLeast(0)
-                    val nextReq = visible[(curIdx + 1) % visible.size]
-                    state.copy(
-                        tripStage = DriverTripStage.OFFER_AVAILABLE,
-                        selectedRequestId = nextReq.id,
-                        currentRequestIndex = (curIdx + 1) % visible.size,
-                        completedTripsToday = state.completedTripsToday + 1,
-                        earningsTodayMxn = state.earningsTodayMxn + fare,
-                        pendingPassengerRatingTarget = currentReq,
-                        toastMessage = "¡Servicio finalizado! +$$fare MXN registrados"
-                    )
-                }
+                val origin = _driverState.value.driverLatLng ?: LatLng(currentReq.startLat, currentReq.startLng)
+                val dest = LatLng(currentReq.endLat, currentReq.endLng)
+                fetchDriverStreetRoute(origin = origin, destination = dest, isRecalculation = false)
+                refreshOnlineUnits()
+            }
+            DriverTripStage.TRIP_IN_PROGRESS -> {
+                completeActiveDriverService(currentReq, role)
             }
         }
+    }
+
+    private fun completeActiveDriverService(currentReq: DriverRideRequest, role: UserRole) {
+        val fare = currentReq.fareMxn
+        sessionRepository.addTripRequest(
+            origin = currentReq.origin,
+            destination = currentReq.destination,
+            fareMxn = "$fare",
+            mode = if (currentReq.isDeliveryOrCommerce) ServiceMode.DELIVERY else ServiceMode.STANDARD
+        )
+        _passengerState.update { pState ->
+            val live = pState.activeLiveTrip
+            if (live != null && live.id == currentReq.id) {
+                pState.copy(
+                    activeLiveTrip = live.copy(
+                        phase = LiveTripPhase.COMPLETED,
+                        etaMinutes = 0
+                    )
+                )
+            } else {
+                pState
+            }
+        }
+        _driverState.update { state ->
+            val visible = state.visibleRequestsFor(role)
+            val curIdx = visible.indexOfFirst { it.id == currentReq.id }.coerceAtLeast(0)
+            val nextReq = visible[(curIdx + 1) % visible.size]
+            state.copy(
+                tripStage = DriverTripStage.OFFER_AVAILABLE,
+                selectedRequestId = nextReq.id,
+                currentRequestIndex = (curIdx + 1) % visible.size,
+                completedTripsToday = state.completedTripsToday + 1,
+                earningsTodayMxn = state.earningsTodayMxn + fare,
+                activeStreetRoute = null,
+                displayedRoutePoints = emptyList(),
+                nextInstructionText = "",
+                nextTurnDistanceLabel = "",
+                remainingRouteDistanceLabel = "",
+                remainingRouteEtaMinutes = 0,
+                isRecalculatingRoute = false,
+                pickupCodeVerified = false,
+                deliveryCodeVerified = false,
+                pendingPassengerRatingTarget = currentReq,
+                toastMessage = "¡Servicio finalizado! +$$fare MXN registrados"
+            )
+        }
+        refreshDriverPreviewRoute()
         refreshOnlineUnits()
+    }
+
+    private fun refreshDriverPreviewRoute() {
+        val role = sessionRepository.session.value.role
+        val req = _driverState.value.activeRequestFor(role)
+        fetchDriverPreviewRoute(LatLng(req.startLat, req.startLng), LatLng(req.endLat, req.endLng))
+    }
+
+    private fun fetchDriverPreviewRoute(origin: LatLng, destination: LatLng) {
+        viewModelScope.launch {
+            val route = mapsRepository.fetchStreetRoute(origin, destination)
+            _driverState.update { it.copy(previewRoutePoints = route.points) }
+        }
+    }
+
+    private fun refreshPassengerStreetRoute(origin: LatLng, destination: LatLng) {
+        passengerRouteJob?.cancel()
+        passengerRouteJob = viewModelScope.launch {
+            val route = mapsRepository.fetchStreetRoute(origin, destination)
+            _passengerState.update { it.copy(streetRoutePoints = route.points) }
+        }
+    }
+
+    private fun fetchDriverStreetRoute(
+        origin: LatLng,
+        destination: LatLng,
+        isRecalculation: Boolean
+    ) {
+        driverRouteJob?.cancel()
+        driverRouteJob = viewModelScope.launch {
+            val route = mapsRepository.fetchStreetRoute(origin, destination)
+            val nowMs = System.currentTimeMillis()
+            _driverState.update { state ->
+                val updated = updateRouteProgressForDriver(state, route, origin, destination)
+                updated.copy(
+                    activeStreetRoute = route,
+                    displayedRoutePoints = route.points,
+                    routeSourceLabel = route.sourceLabel,
+                    lastRouteFetchDest = destination,
+                    lastRouteFetchTimeMs = nowMs,
+                    isRecalculatingRoute = false,
+                    toastMessage = if (isRecalculation) {
+                        "Ruta actualizada por ${route.steps.firstOrNull()?.streetName ?: "calle actual"}"
+                    } else {
+                        state.toastMessage
+                    }
+                )
+            }
+        }
+    }
+
+    private fun updateRouteProgressForDriver(
+        state: DriverMapUiState,
+        route: StreetNavigationRoute,
+        driverPos: LatLng,
+        finalDestination: LatLng
+    ): DriverMapUiState {
+        val steps = route.steps
+        var stepIdx = state.currentStepIndex.coerceIn(0, (steps.size - 1).coerceAtLeast(0))
+        while (stepIdx < steps.lastIndex) {
+            val stepEnd = LatLng(steps[stepIdx].endLat, steps[stepIdx].endLng)
+            if (mapsRepository.calculateDistanceMeters(driverPos, stepEnd) <= 28.0) {
+                stepIdx++
+            } else {
+                break
+            }
+        }
+        val activeStep = steps.getOrNull(stepIdx)
+        val turnDistMeters = if (activeStep != null) {
+            mapsRepository.calculateDistanceMeters(
+                driverPos,
+                LatLng(activeStep.endLat, activeStep.endLng)
+            ).roundToInt().coerceAtLeast(10)
+        } else {
+            mapsRepository.calculateDistanceMeters(driverPos, finalDestination).roundToInt()
+        }
+        val remainingTotalMeters = mapsRepository.calculateDistanceMeters(driverPos, finalDestination)
+            .roundToInt()
+            .coerceAtLeast(30)
+        val remainingEtaMin = ((remainingTotalMeters / 1000.0) * 2.6).roundToInt().coerceAtLeast(1)
+
+        val turnLabel = if (turnDistMeters >= 1000) {
+            "${"%.1f".format(turnDistMeters / 1000.0)} km"
+        } else {
+            "$turnDistMeters m"
+        }
+        val remLabel = if (remainingTotalMeters >= 1000) {
+            "${"%.1f".format(remainingTotalMeters / 1000.0)} km"
+        } else {
+            "$remainingTotalMeters m"
+        }
+
+        // Trim already-driven polyline prefix so active route line dynamically leads ahead of driver
+        val trimmedPoints = if (route.points.size >= 2) {
+            var closestIdx = 0
+            var minDist = Double.MAX_VALUE
+            route.points.forEachIndexed { idx, pt ->
+                val d = mapsRepository.calculateDistanceMeters(driverPos, pt)
+                if (d < minDist) {
+                    minDist = d
+                    closestIdx = idx
+                }
+            }
+            val tail = route.points.drop(closestIdx)
+            if (tail.size >= 2) listOf(driverPos) + tail.drop(1) else listOf(driverPos, finalDestination)
+        } else {
+            listOf(driverPos, finalDestination)
+        }
+
+        return state.copy(
+            currentStepIndex = stepIdx,
+            displayedRoutePoints = trimmedPoints,
+            nextInstructionText = activeStep?.instruction ?: "Continúa hacia tu destino",
+            nextTurnDistanceLabel = "En $turnLabel",
+            nextTurnManeuver = activeStep?.maneuver ?: "straight",
+            remainingRouteDistanceLabel = remLabel,
+            remainingRouteEtaMinutes = remainingEtaMin
+        )
     }
 
     fun submitPassengerRating(stars: Int, comment: String) {

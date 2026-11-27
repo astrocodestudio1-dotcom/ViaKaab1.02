@@ -1,5 +1,6 @@
 package com.example.viakaab.model
 
+import com.google.android.gms.maps.model.LatLng
 import kotlinx.serialization.Serializable
 
 enum class UserRole(val key: String, val displayName: String) {
@@ -57,6 +58,24 @@ enum class LiveTripPhase(val label: String) {
     COMPLETED("Viaje finalizado")
 }
 
+data class NavigationStep(
+    val instruction: String,
+    val streetName: String,
+    val distanceMeters: Int,
+    val durationSeconds: Int,
+    val maneuver: String,
+    val endLat: Double,
+    val endLng: Double
+)
+
+data class StreetNavigationRoute(
+    val points: List<LatLng>,
+    val steps: List<NavigationStep>,
+    val totalDistanceMeters: Int,
+    val totalDurationSeconds: Int,
+    val sourceLabel: String = "Google Maps"
+)
+
 data class ActiveLiveTrip(
     val id: String,
     val origin: String,
@@ -72,7 +91,9 @@ data class ActiveLiveTrip(
     val phase: LiveTripPhase = LiveTripPhase.SEARCHING,
     val driverLat: Double = pickupLat,
     val driverLng: Double = pickupLng,
-    val etaMinutes: Int = 4
+    val etaMinutes: Int = 4,
+    val pickupCode: String = "",
+    val deliveryCode: String = ""
 )
 
 enum class MapVehicleType {
@@ -182,7 +203,9 @@ data class DriverRideRequest(
     val serviceTypeLabel: String = "Viaje Estándar",
     val requestCategory: DriverRequestCategory = DriverRequestCategory.PASSENGER_RIDE,
     val orderDetails: String = "",
-    val passengerRatingLabel: String = "★ 4.9"
+    val passengerRatingLabel: String = "★ 4.9",
+    val pickupCode: String = "",
+    val deliveryCode: String = ""
 ) {
     val isDeliveryOrCommerce: Boolean
         get() = requestCategory != DriverRequestCategory.PASSENGER_RIDE
